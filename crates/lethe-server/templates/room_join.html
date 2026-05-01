@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Join encrypted room &middot; Lethe{% endblock %}
+{% block head %}
+<meta name="lethe-invite-code" content="{{ invite_code }}">
+{% endblock %}
+{% block main %}
+<h1>Join encrypted room</h1>
+<p class="warn">
+  Joining generates new signing and encryption keys on this device. They
+  are not shared with the server.
+</p>
+<button id="join-btn" type="button">Generate keys and request access</button>
+<p class="status" id="join-status"></p>
+<p id="open-room-line" hidden><a id="open-room" href="">Open room</a></p>
+<script type="module" src="/static/js/room_join.js"></script>
+{% endblock %}

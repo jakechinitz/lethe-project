@@ -1,0 +1,121 @@
+//! Post creation and listing logic: PoW gate, optional Ed25519 verify,
+//! `signer_first_seq` lookup.
+
+use crate::{
+    crypto, db, error::{AppError, AppResult},
+    ids, pow, time as ltime,
+};
+use lethe_types::posts::*;
+use sqlx::PgPool;
+
+const MAX_TITLE: usize = 256;
+const MAX_BODY: usize = 16 * 1024;
+
+pub async fn create_thread(
+    db: &PgPool,
+    pow_bits: u32,
+    req: CreateThreadReq,
+) -> AppResult<CreateThreadResp> {
+    if req.title.is_empty() || req.title.len() > MAX_TITLE {
+        return Err(AppError::BadRequest("title length"));
+    }
+    if req.body.is_empty() || req.body.len() > MAX_BODY {
+        return Err(AppError::BadRequest("body length"));
+    }
+    let nonce = ids::unb64(&req.pow_nonce).map_err(|_| AppError::BadRequest("pow_nonce b64"))?;
+
+    // For thread creation we PoW over the *board id* (no thread id yet) so
+    // that the client can compute it without a server round-trip first.
+    if !pow::verify(req.board_id.as_bytes(), &req.body, &nonce, pow_bits) {
+        return Err(AppError::BadRequest("insufficient pow"));
+    }
+
+    let thread_id = ids::new_ulid();
+    let now = ltime::now_coarse();
+    db::threads::create(db, &thread_id, &req.board_id, &req.title, now).await?;
+    let inserted = db::posts::insert(
+        db,
+        db::posts::NewPost {
+            thread_id: &thread_id,
+            body: &req.body,
+            pow_nonce: &nonce,
+            pubkey: None,
+            signature: None,
+            created_at: now,
+        },
+    )
+    .await?;
+    Ok(CreateThreadResp {
+        thread_id: ids::b64(&thread_id),
+        seq: inserted.seq,
+    })
+}
+
+pub async fn create_post(
+    db: &PgPool,
+    pow_bits: u32,
+    thread_id_b64: &str,
+    req: CreatePostReq,
+) -> AppResult<CreatePostResp> {
+    if req.body.is_empty() || req.body.len() > MAX_BODY {
+        return Err(AppError::BadRequest("body length"));
+    }
+    let thread_id = ids::unb64(thread_id_b64)
+        .map_err(|_| AppError::BadRequest("thread_id b64"))?;
+    if !db::threads::exists(db, &thread_id).await? {
+        return Err(AppError::NotFound);
+    }
+    let nonce = ids::unb64(&req.pow_nonce).map_err(|_| AppError::BadRequest("pow_nonce b64"))?;
+    if !pow::verify(&thread_id, &req.body, &nonce, pow_bits) {
+        return Err(AppError::BadRequest("insufficient pow"));
+    }
+
+    let (pubkey_bytes, signature_bytes) = match (&req.pubkey, &req.signature) {
+        (None, None) => (None, None),
+        (Some(pk), Some(sig)) => {
+            let pk = ids::unb64(pk).map_err(|_| AppError::BadRequest("pubkey b64"))?;
+            let sig = ids::unb64(sig).map_err(|_| AppError::BadRequest("signature b64"))?;
+            crypto::verify_post_signature(&pk, &sig, &thread_id, &req.body)?;
+            (Some(pk), Some(sig))
+        }
+        _ => return Err(AppError::BadRequest("pubkey/signature must come together")),
+    };
+
+    let now = ltime::now_coarse();
+    let inserted = db::posts::insert(
+        db,
+        db::posts::NewPost {
+            thread_id: &thread_id,
+            body: &req.body,
+            pow_nonce: &nonce,
+            pubkey: pubkey_bytes.as_deref(),
+            signature: signature_bytes.as_deref(),
+            created_at: now,
+        },
+    )
+    .await?;
+
+    let signer_first_seq = match &pubkey_bytes {
+        Some(pk) => db::posts::signer_first_seq(db, &thread_id, pk).await?,
+        None => None,
+    };
+
+    Ok(CreatePostResp {
+        post_id: ids::b64(&inserted.post_id),
+        seq: inserted.seq,
+        signer_first_seq,
+    })
+}
+
+pub async fn list_posts(
+    db: &PgPool,
+    thread_id_b64: &str,
+    since_seq: i32,
+) -> AppResult<Vec<PostView>> {
+    let thread_id =
+        ids::unb64(thread_id_b64).map_err(|_| AppError::BadRequest("thread_id b64"))?;
+    if !db::threads::exists(db, &thread_id).await? {
+        return Err(AppError::NotFound);
+    }
+    Ok(db::posts::list_in_thread(db, &thread_id, since_seq, 500).await?)
+}

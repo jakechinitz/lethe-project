@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}Lethe{% endblock %}</title>
+    <link rel="stylesheet" href="/static/app.css">
+    {% block head %}{% endblock %}
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="/">Lethe</a>
+      <span class="tagline">anonymous, server-untrusted</span>
+    </header>
+    <main>
+      {% block main %}{% endblock %}
+    </main>
+    <footer>
+      <p>No accounts. No profiles. The server is treated as untrusted.</p>
+    </footer>
+  </body>
+</html>

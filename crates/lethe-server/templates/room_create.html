@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}New encrypted room &middot; Lethe{% endblock %}
+{% block head %}
+<meta name="lethe-from-thread" content="{{ from_thread_id }}">
+{% endblock %}
+{% block main %}
+<h1>New encrypted room</h1>
+<p class="warn">
+  Messages will be encrypted on your device. The server stores ciphertext
+  only. Anyone you let into this room can copy or leak messages. This
+  product cannot tell you whether a member is safe.
+</p>
+<form id="create-form">
+  <label>
+    <input type="checkbox" id="attach-provenance" checked>
+    Attach thread provenance (sign with my identity from this thread)
+  </label>
+  <button type="submit">Create room</button>
+  <p class="status" id="create-status"></p>
+</form>
+<section id="invite-section" hidden>
+  <h2>Invite link</h2>
+  <p>Share this link with the people you want to invite:</p>
+  <p><code id="invite-link"></code></p>
+  <p><a id="open-room" href="">Open room</a></p>
+</section>
+<script type="module" src="/static/js/room_create.js"></script>
+{% endblock %}

@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} &middot; Lethe{% endblock %}
+{% block head %}
+<meta name="lethe-board-id" content="{{ board_id }}">
+<meta name="lethe-thread-id" content="{{ thread_id_b64 }}">
+<meta name="lethe-pow-bits" content="{{ pow_bits }}">
+{% endblock %}
+{% block main %}
+<p class="crumbs"><a href="/b/{{ board_id }}">/{{ board_id }}/</a> &raquo;</p>
+<h1>{{ title }}</h1>
+
+<section id="posts" class="posts" aria-busy="true">
+  <p class="muted">Loading…</p>
+</section>
+
+<section class="reply">
+  <h2>Reply</h2>
+  <div class="identity-toggle">
+    <label>
+      <input type="checkbox" id="claim-identity">
+      Claim thread-local identity
+    </label>
+    <p class="hint">
+      A signing key is generated locally and stored in this browser only.
+      Clearing browser data destroys it. There is no recovery.
+    </p>
+    <button type="button" id="forget-identity" hidden>Forget identity for this thread</button>
+  </div>
+  <form id="reply-form">
+    <textarea name="body" rows="4" maxlength="16384" required></textarea>
+    <button type="submit">Post (computes proof-of-work)</button>
+    <p class="status" id="reply-status"></p>
+  </form>
+</section>
+
+<section class="room-cta">
+  <a href="/r/new?from={{ thread_id_b64 }}">Create encrypted room from this thread</a>
+</section>
+
+<script type="module" src="/static/js/thread.js"></script>
+{% endblock %}
