@@ -108,6 +108,21 @@ idempotent. The "My rooms" page (linked from the topbar) lists every
 room this browser has keys for — built entirely from `localStorage`,
 so the server never sees a per-user room list.
 
+## Backup &amp; restore (keyfile)
+
+Identities live entirely in `localStorage`. Tor Browser's "New Identity"
+button and the Safer security level wipe site storage, which would
+otherwise destroy every thread identity and room key on the device.
+
+The "My rooms" page hosts an **Export keyfile** / **Import keyfile**
+pair. Export prompts for a passphrase (≥ 8 chars), runs Argon2id over
+it, encrypts every `lethe.*` localStorage entry with
+XChaCha20-Poly1305, and downloads the result as `lethe-keys-YYYY-MM-DD.lethe`.
+Import asks for the passphrase and restores the entries (with an
+overwrite/keep-local prompt for any collisions). The file format is
+documented at the top of `client/src/lib/keyfile.ts`. Lose the
+passphrase and the file is unrecoverable.
+
 ## Replay protection
 
 Authenticated room requests (`POST /messages/list`,

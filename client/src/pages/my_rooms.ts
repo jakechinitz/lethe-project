@@ -1,9 +1,12 @@
 // "My rooms": pure-client page that lists every room this browser has
 // keys for. Reads localStorage, fetches a small server snapshot per
 // room (current epoch + active member count) so the list reflects
-// reality, and links back into each room.
+// reality, and links back into each room. Also hosts the keyfile
+// export/import UI for backing up identities against Tor Browser
+// session resets.
 
-import { $, clear, durationSince, el } from "../lib/dom";
+import { $, clear, durationSince, el, text } from "../lib/dom";
+import * as keyfile from "../lib/keyfile";
 
 interface StoredRoomV2 {
   v: 2;
@@ -18,6 +21,12 @@ interface Snapshot {
 }
 
 const root = $<HTMLElement>("#my-rooms-list");
+const exportBtn = $<HTMLButtonElement>("#export-btn");
+const importInput = $<HTMLInputElement>("#import-input");
+const keyfileStatus = $<HTMLParagraphElement>("#keyfile-status");
+
+exportBtn.addEventListener("click", onExport);
+importInput.addEventListener("change", onImport);
 
 main();
 
@@ -102,3 +111,62 @@ function renderRow(roomId: string, snap: Snapshot | null): HTMLElement {
 // gets removed in a refactor; durationSince is intentionally available
 // here for future "last visited" labels.
 void durationSince;
+
+async function onExport(): Promise<void> {
+  const entries = keyfile.snapshotEntries();
+  const count = Object.keys(entries).length;
+  if (count === 0) {
+    text(keyfileStatus, "No keys to export. Post once or join a room first.");
+    return;
+  }
+  const passphrase = prompt(
+    `You're about to export ${count} key entr${count === 1 ? "y" : "ies"} to an encrypted file.\n` +
+      "Pick a passphrase (at least 8 characters). There is no recovery if you forget it.",
+  );
+  if (!passphrase) return;
+  if (passphrase.length < 8) {
+    text(keyfileStatus, "Passphrase must be at least 8 characters.");
+    return;
+  }
+  const confirm_ = prompt("Confirm passphrase:");
+  if (confirm_ !== passphrase) {
+    text(keyfileStatus, "Passphrases didn't match. Nothing exported.");
+    return;
+  }
+  text(keyfileStatus, "Encrypting…");
+  try {
+    const bytes = await keyfile.encryptKeyfile(passphrase, entries);
+    keyfile.downloadBytes(bytes, keyfile.suggestedFilename());
+    text(keyfileStatus, `Exported ${count} entr${count === 1 ? "y" : "ies"}.`);
+  } catch (e) {
+    text(keyfileStatus, `Export failed: ${(e as Error).message}`);
+  }
+}
+
+async function onImport(ev: Event): Promise<void> {
+  const input = ev.target as HTMLInputElement;
+  const file = input.files?.[0];
+  input.value = ""; // allow re-selecting the same file later
+  if (!file) return;
+  const passphrase = prompt("Enter the passphrase for this keyfile:");
+  if (!passphrase) return;
+  text(keyfileStatus, "Decrypting…");
+  try {
+    const bytes = await keyfile.readFileAsBytes(file);
+    const entries = await keyfile.decryptKeyfile(passphrase, bytes);
+    const overwrite = confirm(
+      "If this keyfile contains entries that already exist locally, overwrite them?\n" +
+        "OK = overwrite (use the imported version)\n" +
+        "Cancel = keep local versions",
+    );
+    const result = keyfile.applyEntries(entries, { overwrite });
+    text(
+      keyfileStatus,
+      `Imported. Added ${result.added}, overwrote ${result.overwrote}, skipped ${result.skipped}.`,
+    );
+    // Refresh the room list so the imported rooms show up immediately.
+    await main();
+  } catch (e) {
+    text(keyfileStatus, `Import failed: ${(e as Error).message}`);
+  }
+}
