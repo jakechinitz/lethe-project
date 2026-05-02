@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Moderation log &middot; Lethe{% endblock %}
+{% block main %}
+<h1>Moderation log</h1>
+<p class="muted">
+  Every public-content rejection appears here. The body itself is never
+  stored — only its SHA-256 hash, the board it was posted to, and a
+  short reason code. Private rooms are end-to-end encrypted; nothing
+  in them is ever evaluated.
+</p>
+
+{% if entries.is_empty() %}
+  <p class="muted">No moderation actions yet.</p>
+{% else %}
+<table class="mod-log">
+  <thead>
+    <tr>
+      <th>When</th>
+      <th>Board</th>
+      <th>Reason</th>
+      <th>Body hash</th>
+      <th>ID</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for e in entries %}
+    <tr>
+      <td>{{ e.decided_at }}</td>
+      <td>{{ e.board_id }}</td>
+      <td><code>{{ e.reason }}</code></td>
+      <td><code>{{ e.body_hash_short }}…</code></td>
+      <td><code>{{ e.id_short }}</code></td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% endblock %}

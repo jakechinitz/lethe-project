@@ -13,9 +13,14 @@ pub async fn create(
     Path(thread_id): Path<String>,
     Json(req): Json<CreatePostReq>,
 ) -> AppResult<Json<CreatePostResp>> {
-    let resp =
-        logic::posts::create_post(&state.db, state.cfg.default_pow_bits as u32, &thread_id, req)
-            .await?;
+    let resp = logic::posts::create_post(
+        &state.db,
+        state.cfg.default_pow_bits as u32,
+        state.classifier.as_ref(),
+        &thread_id,
+        req,
+    )
+    .await?;
     Ok(Json(resp))
 }
 

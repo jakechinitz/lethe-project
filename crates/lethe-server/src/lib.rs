@@ -15,6 +15,7 @@ pub mod db;
 pub mod error;
 pub mod ids;
 pub mod logic;
+pub mod moderation;
 pub mod pow;
 pub mod routes;
 pub mod state;
@@ -70,6 +71,7 @@ pub fn router(state: AppState) -> Router {
     let pages = Router::new()
         .route("/", get(routes::pages::index))
         .route("/my-rooms", get(routes::pages::my_rooms))
+        .route("/moderation", get(routes::pages::moderation_log))
         .route("/b/:board", get(routes::pages::board))
         .route(
             "/b/:board/t/:thread_id",
@@ -103,7 +105,11 @@ pub fn router(state: AppState) -> Router {
 
 pub async fn build_state(cfg: Config) -> Result<AppState, sqlx::Error> {
     let db: PgPool = db::connect(&cfg.database_url).await?;
-    Ok(AppState { db, cfg })
+    Ok(AppState {
+        db,
+        cfg,
+        classifier: std::sync::Arc::new(moderation::classifier::NoopClassifier),
+    })
 }
 
 pub async fn run(cfg: Config) -> Result<(), Box<dyn std::error::Error>> {

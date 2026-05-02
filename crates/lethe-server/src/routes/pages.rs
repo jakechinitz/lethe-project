@@ -178,6 +178,38 @@ pub async fn my_rooms() -> AppResult<Response> {
 }
 
 #[derive(Template)]
+#[template(path = "moderation.html")]
+struct ModerationPage {
+    entries: Vec<ModerationEntry>,
+}
+
+struct ModerationEntry {
+    id_short: String,
+    board_id: String,
+    body_hash_short: String,
+    reason: String,
+    decided_at: String,
+}
+
+pub async fn moderation_log(State(state): State<AppState>) -> AppResult<Response> {
+    let rows = crate::db::moderation::list_recent(&state.db, 200, None).await?;
+    let entries = rows
+        .into_iter()
+        .map(|r| ModerationEntry {
+            id_short: ids::b64(&r.id)[..8].to_string(),
+            board_id: r.board_id.unwrap_or_else(|| "—".into()),
+            body_hash_short: ids::b64(&r.body_hash)[..12].to_string(),
+            reason: r.reason,
+            decided_at: r
+                .decided_at
+                .format(&time::format_description::well_known::Rfc3339)
+                .unwrap_or_default(),
+        })
+        .collect();
+    Ok(ModerationPage { entries }.into_response())
+}
+
+#[derive(Template)]
 #[template(path = "404.html")]
 struct NotFoundPage {}
 

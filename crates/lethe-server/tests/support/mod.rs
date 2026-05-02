@@ -5,7 +5,7 @@
 
 pub mod browser;
 
-use lethe_server::{config::Config, db, router, state::AppState};
+use lethe_server::{config::Config, db, moderation::classifier::NoopClassifier, router, state::AppState};
 use sqlx::PgPool;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -47,7 +47,11 @@ pub async fn spawn() -> TestServer {
     let pool = db::connect_with_pool_size(&cfg.database_url, 1)
         .await
         .expect("db connect");
-    let state = AppState { db: pool.clone(), cfg };
+    let state = AppState {
+        db: pool.clone(),
+        cfg,
+        classifier: std::sync::Arc::new(NoopClassifier),
+    };
     let app = router(state);
 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();

@@ -3,7 +3,7 @@
 
 use crate::{
     crypto, db, error::{AppError, AppResult},
-    ids, pow, time as ltime,
+    ids, moderation, pow, time as ltime,
 };
 use lethe_types::posts::*;
 use sqlx::PgPool;
@@ -14,6 +14,7 @@ const MAX_BODY: usize = 16 * 1024;
 pub async fn create_thread(
     db: &PgPool,
     pow_bits: u32,
+    classifier: &dyn moderation::classifier::Classifier,
     req: CreateThreadReq,
 ) -> AppResult<CreateThreadResp> {
     if req.title.is_empty() || req.title.len() > MAX_TITLE {
@@ -28,6 +29,13 @@ pub async fn create_thread(
     // that the client can compute it without a server round-trip first.
     if !pow::verify(req.board_id.as_bytes(), &req.body, &nonce, pow_bits) {
         return Err(AppError::BadRequest("insufficient pow"));
+    }
+
+    if let moderation::Verdict::Reject(reason) =
+        moderation::evaluate(db, &req.board_id, &req.body, classifier).await?
+    {
+        moderation::log_reject(db, Some(&req.board_id), &req.body, reason).await?;
+        return Err(AppError::BadRequest(reason_static(reason)));
     }
 
     let thread_id = ids::new_ulid();
@@ -51,9 +59,22 @@ pub async fn create_thread(
     })
 }
 
+/// Maps a moderation reason to a stable static string suitable for an
+/// `AppError::BadRequest` payload.
+fn reason_static(r: moderation::Reason) -> &'static str {
+    match r {
+        moderation::Reason::SpamDuplicate    => "rejected: spam_duplicate",
+        moderation::Reason::SpamLinkDensity  => "rejected: spam_link_density",
+        moderation::Reason::SpamTooShort     => "rejected: spam_too_short",
+        moderation::Reason::MalwareLink      => "rejected: malware_link",
+        moderation::Reason::AiClassifier     => "rejected: ai_classifier",
+    }
+}
+
 pub async fn create_post(
     db: &PgPool,
     pow_bits: u32,
+    classifier: &dyn moderation::classifier::Classifier,
     thread_id_b64: &str,
     req: CreatePostReq,
 ) -> AppResult<CreatePostResp> {
@@ -68,6 +89,16 @@ pub async fn create_post(
     let nonce = ids::unb64(&req.pow_nonce).map_err(|_| AppError::BadRequest("pow_nonce b64"))?;
     if !pow::verify(&thread_id, &req.body, &nonce, pow_bits) {
         return Err(AppError::BadRequest("insufficient pow"));
+    }
+
+    let board_id = db::threads::board_id_for(db, &thread_id)
+        .await?
+        .ok_or(AppError::NotFound)?;
+    if let moderation::Verdict::Reject(reason) =
+        moderation::evaluate(db, &board_id, &req.body, classifier).await?
+    {
+        moderation::log_reject(db, Some(&board_id), &req.body, reason).await?;
+        return Err(AppError::BadRequest(reason_static(reason)));
     }
 
     let (pubkey_bytes, signature_bytes) = match (&req.pubkey, &req.signature) {

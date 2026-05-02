@@ -560,6 +560,23 @@ select {
   font-size: .85rem;
 }
 
+.mod-log {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: .9rem;
+  margin: 1rem 0;
+}
+.mod-log th, .mod-log td {
+  text-align: left;
+  padding: .55rem .65rem;
+  border-bottom: 1px solid var(--hairline);
+}
+.mod-log th {
+  border-bottom: 1px solid var(--line);
+  font-weight: 600;
+}
+.mod-log code { font-size: .85rem; }
+
 .keyfile-actions {
   border: 1px solid var(--line);
   padding: 1rem;

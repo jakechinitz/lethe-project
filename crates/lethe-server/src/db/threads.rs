@@ -30,6 +30,14 @@ pub async fn exists(db: &PgPool, id: &[u8]) -> Result<bool, sqlx::Error> {
     Ok(row.is_some())
 }
 
+pub async fn board_id_for(db: &PgPool, id: &[u8]) -> Result<Option<String>, sqlx::Error> {
+    let row: Option<(String,)> = sqlx::query_as("SELECT board_id FROM threads WHERE id = $1")
+        .bind(id)
+        .fetch_optional(db)
+        .await?;
+    Ok(row.map(|r| r.0))
+}
+
 pub async fn get_title(db: &PgPool, id: &[u8]) -> Result<Option<String>, sqlx::Error> {
     let row: Option<(String,)> = sqlx::query_as("SELECT title FROM threads WHERE id = $1")
         .bind(id)

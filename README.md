@@ -123,6 +123,29 @@ overwrite/keep-local prompt for any collisions). The file format is
 documented at the top of `client/src/lib/keyfile.ts`. Lose the
 passphrase and the file is unrecoverable.
 
+## Public-content moderation
+
+Two-layer pipeline runs on every public post submission, after PoW and
+before insert. Never sees private-room ciphertext.
+
+1. **Deterministic rules** (`src/moderation/rules.rs`): rejects with
+   - `spam_too_short` — body has fewer than 3 non-whitespace chars.
+   - `spam_link_density` — ≥ 4 URLs and < 80 chars of non-link text.
+   - `spam_duplicate` — same body in the same board within 24 hours.
+   - `malware_link` — body contains a substring from a configurable
+     host blocklist (empty by default).
+2. **AI classifier** (`src/moderation/classifier.rs`): a `Classifier`
+   trait. The default `NoopClassifier` allows everything — no AI calls
+   happen until an operator swaps in a real implementation. The slot
+   exists; the model is not chosen.
+
+Reject means *delete and tell the user the reason code*. The submission
+is never inserted into `posts`. Every reject writes a row to the
+`moderation_actions` table containing: a fresh ULID, the board id, a
+SHA-256 hash of the body (not the body itself), the reason code, and a
+timestamp. The public **`/moderation`** page renders the log so anyone
+can audit removals without seeing any rejected content.
+
 ## Replay protection
 
 Authenticated room requests (`POST /messages/list`,

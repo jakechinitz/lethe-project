@@ -80,8 +80,8 @@ async fn default_feed_lists_all_categories() {
 async fn category_filter_excludes_other_boards() {
     let s = support::spawn().await;
     let client = reqwest::Client::new();
-    create_thread(&client, &s.base_url, s.pow_bits, "government", "x").await;
-    create_thread(&client, &s.base_url, s.pow_bits, "economy", "y").await;
+    create_thread(&client, &s.base_url, s.pow_bits, "government", "filter-test-gov").await;
+    create_thread(&client, &s.base_url, s.pow_bits, "economy", "filter-test-econ").await;
 
     let resp: FeedResp = client
         .get(format!("{}/api/feed?cat=government", s.base_url))
@@ -169,7 +169,7 @@ async fn last_post_at_bumps_on_reply_and_resorts() {
 async fn unknown_category_returns_empty() {
     let s = support::spawn().await;
     let client = reqwest::Client::new();
-    create_thread(&client, &s.base_url, s.pow_bits, "economy", "z").await;
+    create_thread(&client, &s.base_url, s.pow_bits, "economy", "unknown-cat-test").await;
     let resp: FeedResp = client
         .get(format!("{}/api/feed?cat=does_not_exist", s.base_url))
         .send()
