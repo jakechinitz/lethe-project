@@ -123,6 +123,34 @@ overwrite/keep-local prompt for any collisions). The file format is
 documented at the top of `client/src/lib/keyfile.ts`. Lose the
 passphrase and the file is unrecoverable.
 
+## Backups
+
+Encrypted-at-rest, key-held-offline. `infra/backup.sh` runs `pg_dump`,
+pipes through `age` so only the holder of the offline private key can
+decrypt, and writes a timestamped file to `/var/backups/lethe`.
+`infra/provision.sh` installs it on a daily cron at 03:17 UTC.
+
+You generate the keypair on a separate machine
+(`age-keygen -o lethe-backup-key.txt`), put **only the public key** in
+`/etc/lethe.env` as `BACKUP_AGE_RECIPIENT=age1...`, and store the
+private-key file offline. A server compromise cannot decrypt past
+backups; restoring requires the offline file. To restore:
+
+```sh
+age --decrypt -i lethe-backup-key.txt /var/backups/lethe/lethe-2026-05-12T031700Z.sql.age \
+    | psql "$DATABASE_URL"
+```
+
+Old backups are pruned after `BACKUP_RETENTION_DAYS` (default 30).
+
+## Reply quoting
+
+Inside a thread, typing `>>3` becomes a clickable link to post #3 in
+the same thread. Each post has a "Reply to #N" button that prepends
+`>>N\n` to the reply textarea so you don't have to type it. Out-of-range
+references render as plain links that don't scroll anywhere — there's
+no enforcement that `>>N` actually exists.
+
 ## Public-content moderation
 
 Two-layer pipeline runs on every public post submission, after PoW and

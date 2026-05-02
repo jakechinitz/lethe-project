@@ -115,12 +115,52 @@ function renderPost(p: PostView): HTMLElement {
       : "same anon (first signed post)"
     : "anonymous";
 
-  const meta_ = el("div", { class: "meta" }, [seqLink, " · ", ts, " · ", identity]);
-  const body = el("div", { class: "body" }, [p.body]);
+  const replyBtn = el("button", { type: "button", class: "reply-btn" }, [`Reply to #${p.seq}`]);
+  replyBtn.addEventListener("click", () => {
+    const ta = document.querySelector<HTMLTextAreaElement>("#reply-form textarea");
+    if (!ta) return;
+    const prefix = `>>${p.seq}\n`;
+    ta.value = ta.value.length === 0 ? prefix : `${ta.value}\n${prefix}`;
+    ta.focus();
+    ta.scrollIntoView({ behavior: "smooth", block: "center" });
+    ta.setSelectionRange(ta.value.length, ta.value.length);
+  });
+
+  const meta_ = el("div", { class: "meta" }, [
+    seqLink, " · ", ts, " · ", identity, " · ", replyBtn,
+  ]);
+  const body = el("div", { class: "body" }, renderBody(p.body));
 
   article.appendChild(meta_);
   article.appendChild(body);
   return article;
+}
+
+/// Splits a post body into text nodes and `>>N` link elements. Inline
+/// matches like ">>123" become `<a href="#p123">>>123</a>`. Out-of-range
+/// references aren't validated here — the link just won't scroll
+/// anywhere.
+function renderBody(text: string): Array<Node | string> {
+  const out: Array<Node | string> = [];
+  const re = />>(\d+)/g;
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      out.push(text.slice(lastIndex, match.index));
+    }
+    const seq = match[1];
+    const link = document.createElement("a");
+    link.href = `#p${seq}`;
+    link.className = "quote";
+    link.textContent = `>>${seq}`;
+    out.push(link);
+    lastIndex = match.index + match[0].length;
+  }
+  if (lastIndex < text.length) {
+    out.push(text.slice(lastIndex));
+  }
+  return out;
 }
 
 function humanAgo(then: Date): string {
@@ -143,6 +183,14 @@ function scrollToHashTarget(): void {
     setTimeout(() => target.classList.remove("flash"), 1500);
   }
 }
+
+window.addEventListener("hashchange", () => {
+  const target = location.hash ? document.querySelector(location.hash) : null;
+  if (target instanceof HTMLElement) {
+    target.classList.add("flash");
+    setTimeout(() => target.classList.remove("flash"), 1500);
+  }
+});
 
 function updateForgetVisibility(): void {
   forgetBtn.hidden = !tkey.hasKeypair(threadIdB64);

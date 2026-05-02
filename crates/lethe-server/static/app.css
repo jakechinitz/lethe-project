@@ -286,6 +286,24 @@ input[type="checkbox"] {
   outline: 2px solid var(--fg);
   outline-offset: 2px;
 }
+.posts .post .reply-btn {
+  font-size: .75rem;
+  padding: .12rem .55rem;
+  min-height: 0;
+  margin: 0;
+  border-radius: 0;
+}
+.posts .body .quote {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: .9em;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  color: var(--fg);
+}
+.posts .body .quote:hover {
+  text-decoration-thickness: 2px;
+}
 
 /* Banners ------------------------------------------------------------ */
 

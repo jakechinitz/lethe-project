@@ -46,8 +46,8 @@ log "installing apt packages"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get install -y --no-install-recommends \
-    build-essential pkg-config libssl-dev curl git \
-    postgresql tor nodejs npm
+    build-essential pkg-config libssl-dev curl git cron \
+    postgresql tor nodejs npm age
 
 # ---------------------------------------------------------------- rust
 
@@ -151,6 +151,32 @@ UNIT
 systemctl daemon-reload
 systemctl enable lethe.service
 systemctl restart lethe.service
+
+# ---------------------------------------------------------------- backups
+
+log "installing backup script"
+install -m 0755 -o root -g root "$REPO_ROOT/infra/backup.sh" /usr/local/bin/lethe-backup
+install -d -m 0700 -o "$LETHE_USER" -g "$LETHE_USER" /var/backups/lethe
+
+# Daily backup at 03:17 UTC, jittered slightly to avoid neighbours.
+cat > /etc/cron.d/lethe-backup <<CRON
+17 3 * * * $LETHE_USER set -a; . $ENV_FILE; set +a; /usr/local/bin/lethe-backup >> /var/log/lethe-backup.log 2>&1
+CRON
+chmod 0644 /etc/cron.d/lethe-backup
+touch /var/log/lethe-backup.log
+chown "$LETHE_USER:$LETHE_USER" /var/log/lethe-backup.log
+systemctl restart cron 2>/dev/null || true
+
+if ! grep -q '^BACKUP_AGE_RECIPIENT=' "$ENV_FILE"; then
+    echo "BACKUP_AGE_RECIPIENT=" >> "$ENV_FILE"
+    log ""
+    log "ACTION REQUIRED: backups will not run until you add an age recipient."
+    log "  1. On a separate machine, run: age-keygen -o lethe-backup-key.txt"
+    log "  2. Copy the public key (the line starting with age1...)"
+    log "  3. Edit $ENV_FILE and set BACKUP_AGE_RECIPIENT=age1...."
+    log "  4. Keep lethe-backup-key.txt OFFLINE. Without it, backups cannot be decrypted."
+    log ""
+fi
 
 # ---------------------------------------------------------------- tor
 
