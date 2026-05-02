@@ -130,7 +130,74 @@ pub async fn members(db: &PgPool, room_id_b64: &str) -> AppResult<MembersResp> {
     }
     Ok(MembersResp {
         members: db::rooms::list_members(db, &room_id).await?,
+        current_epoch: db::rooms::current_epoch(db, &room_id).await?,
     })
+}
+
+/// Removes a member and rekeys the room atomically. Only the room's
+/// creator may call this. The caller MUST also supply a fresh
+/// `wrapped_key` for every other surviving member, otherwise the
+/// transaction aborts. Returns the post-rekey epoch.
+pub async fn remove_and_rekey(
+    db: &PgPool,
+    room_id_b64: &str,
+    req: RemoveMemberReq,
+) -> AppResult<RemoveMemberResp> {
+    let room_id = ids::unb64(room_id_b64).map_err(|_| AppError::BadRequest("room_id b64"))?;
+    if db::rooms::meta_by_id(db, &room_id).await?.is_none() {
+        return Err(AppError::NotFound);
+    }
+
+    let remover_pk = decode_pubkey(&req.remover_sig_pubkey, "remover_sig_pubkey")?;
+    let sig = ids::unb64(&req.sig).map_err(|_| AppError::BadRequest("sig b64"))?;
+    if sig.len() != SIG_LEN {
+        return Err(AppError::BadRequest("sig length"));
+    }
+    let target_box = decode_pubkey(&req.target_box_pubkey, "target_box_pubkey")?;
+
+    let now_ts = time::OffsetDateTime::now_utc().unix_timestamp();
+    if (now_ts - req.ts).abs() > 60 {
+        return Err(AppError::BadRequest("ts outside ±60s window"));
+    }
+    crypto::verify_remove_request(&remover_pk, &sig, &room_id, req.ts, &target_box)?;
+
+    if !db::rooms::is_creator_by_sig(db, &room_id, &remover_pk).await? {
+        return Err(AppError::Forbidden(
+            "only the room creator may remove members",
+        ));
+    }
+
+    let mut wraps: Vec<(Vec<u8>, Vec<u8>)> = Vec::with_capacity(req.new_wrapped_keys.len());
+    for w in &req.new_wrapped_keys {
+        let pk = decode_pubkey(&w.for_box_pubkey, "for_box_pubkey")?;
+        if pk == target_box {
+            return Err(AppError::BadRequest(
+                "cannot rewrap for the removed target",
+            ));
+        }
+        let wrapped = ids::unb64(&w.wrapped_key)
+            .map_err(|_| AppError::BadRequest("wrapped_key b64"))?;
+        if wrapped.is_empty() || wrapped.len() > MAX_WRAPPED_KEY {
+            return Err(AppError::BadRequest("wrapped_key length"));
+        }
+        wraps.push((pk, wrapped));
+    }
+
+    let now = time::OffsetDateTime::now_utc();
+    let new_epoch = db::rooms::remove_and_rekey(db, &room_id, &target_box, &wraps, now)
+        .await
+        .map_err(|e| match e {
+            sqlx::Error::RowNotFound => AppError::Conflict("target is not a current member"),
+            sqlx::Error::Protocol(msg) if msg.contains("wrap count") => {
+                AppError::BadRequest("new_wrapped_keys must cover every surviving member exactly")
+            }
+            sqlx::Error::Protocol(_) => {
+                AppError::BadRequest("new_wrapped_keys must cover every surviving member exactly")
+            }
+            other => AppError::Db(other),
+        })?;
+
+    Ok(RemoveMemberResp { current_epoch: new_epoch })
 }
 
 pub async fn provenance(db: &PgPool, room_id_b64: &str) -> AppResult<ProvenanceResp> {

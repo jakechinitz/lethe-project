@@ -43,7 +43,7 @@ export const api = {
   wrap: (roomId: string, body: unknown) =>
     call<void>(`/api/rooms/${roomId}/wrap`, { method: "POST", body }),
   members: (roomId: string) =>
-    call<{ members: Array<MemberView> }>(`/api/rooms/${roomId}/members`, { method: "GET" }),
+    call<MembersResp>(`/api/rooms/${roomId}/members`, { method: "GET" }),
   provenance: (roomId: string) =>
     call<ProvenanceView>(`/api/rooms/${roomId}/provenance`, { method: "GET" }),
   sendMessage: (roomId: string, body: unknown) =>
@@ -54,6 +54,11 @@ export const api = {
   listMessages: (roomId: string, body: unknown) =>
     call<{ messages: Array<MessageView> }>(
       `/api/rooms/${roomId}/messages/list`,
+      { method: "POST", body },
+    ),
+  removeMember: (roomId: string, body: unknown) =>
+    call<{ current_epoch: number }>(
+      `/api/rooms/${roomId}/remove`,
       { method: "POST", body },
     ),
 };
@@ -73,6 +78,12 @@ export interface MemberView {
   wrapped_key?: string | null;
   joined_at: string;
   invited_by_box_pubkey?: string | null;
+  removed_at?: string | null;
+}
+
+export interface MembersResp {
+  members: MemberView[];
+  current_epoch: number;
 }
 
 export interface ProvenanceView {

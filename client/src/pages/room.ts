@@ -1,11 +1,11 @@
 // Room page: provenance verification, member trust cards, send/receive
-// E2EE messages. The creator-side grant loop runs here too — when a new
-// member appears with `wrapped_key=null`, an existing member's tab wraps
-// the room key for them.
+// E2EE messages, and (creator only) a remove-and-rekey flow that
+// rotates the room key to cut off a removed member from future
+// messages while keeping historical messages decryptable for survivors.
 
 import { api, MemberView, MessageView, ProvenanceView } from "../lib/api";
 import { $, clear, durationSince, el, meta, text } from "../lib/dom";
-import { b64decode, b64encode, fromUtf8 } from "../lib/b64";
+import { b64decode, b64encode, bytesEqual, fromUtf8 } from "../lib/b64";
 import * as roomkey from "../lib/roomkey";
 import { trust } from "../lib/strings";
 
@@ -20,6 +20,8 @@ const sendStatus = $<HTMLParagraphElement>("#send-status");
 
 let lastMessageId: string | undefined;
 let memberCache: MemberView[] = [];
+let amCreator = false;
+let currentEpoch = 0;
 
 main();
 
@@ -30,22 +32,22 @@ async function main(): Promise<void> {
     return;
   }
   await renderProvenance();
-  await tickMembers(stored);
-  await tickMessages(stored);
-  setInterval(() => tickMembers(stored), 4000);
-  setInterval(() => tickMessages(stored), 3000);
+  await tickMembers();
+  await tickMessages();
+  setInterval(tickMembers, 4000);
+  setInterval(tickMessages, 3000);
 
   sendForm.addEventListener("submit", async (ev) => {
     ev.preventDefault();
     const fresh = roomkey.read(roomIdB64);
-    if (!fresh?.roomKey) {
+    if (!fresh || fresh.roomKeys.length === 0) {
       text(sendStatus, "Cannot send: room key not available yet.");
       return;
     }
     const body = String(new FormData(sendForm).get("body") ?? "");
     if (!body) return;
     text(sendStatus, "Sending…");
-    const enc = await roomkey.encryptMessage(body, roomIdBytes, fresh.roomKey);
+    const enc = await roomkey.encryptMessage(body, roomIdBytes, fresh.roomKeys);
     const sig = await roomkey.signMessageEnvelope(
       roomIdBytes,
       enc.nonce,
@@ -61,7 +63,7 @@ async function main(): Promise<void> {
       });
       sendForm.reset();
       text(sendStatus, "");
-      await tickMessages(fresh);
+      await tickMessages();
     } catch (e) {
       text(sendStatus, `Error: ${(e as Error).message}`);
     }
@@ -93,40 +95,133 @@ async function renderProvenance(): Promise<void> {
   );
 }
 
-async function tickMembers(keys: roomkey.RoomKeys): Promise<void> {
-  const { members } = await api.members(roomIdB64);
-  memberCache = members;
-  renderMembers(members);
-  if (keys.roomKey) {
-    await maybeGrantPending(keys, members);
+async function tickMembers(): Promise<void> {
+  const keys = roomkey.read(roomIdB64);
+  if (!keys) return;
+  const resp = await api.members(roomIdB64);
+  memberCache = resp.members;
+  currentEpoch = resp.current_epoch;
+
+  // "I'm the creator" iff my box pubkey matches the member with no inviter.
+  const creatorRow = resp.members.find((m) => !m.invited_by_box_pubkey);
+  amCreator = !!creatorRow && bytesEqual(b64decode(creatorRow.box_pubkey), keys.boxPub);
+
+  if (keys.roomKeys.length > 0) {
+    await maybeGrantPending(keys, resp.members);
+    await maybeAdoptNewEpoch(keys, resp.members);
   } else {
-    await maybeUnwrap(keys, members);
+    await maybeUnwrap(keys, resp.members);
   }
+  renderMembers(resp.members);
 }
 
 function renderMembers(members: MemberView[]): void {
   clear(membersList);
   for (const m of members) {
-    const flagged = isFlagged(m, members);
-    const card = el("div", { class: flagged ? "member flagged" : "member" });
+    const removed = !!m.removed_at;
+    const flagged = !removed && isFlagged(m, members);
+    const card = el("div", {
+      class: removed ? "member removed" : flagged ? "member flagged" : "member",
+    });
+
     const inviter = m.invited_by_box_pubkey
       ? trust.invitedBy(shortId(m.invited_by_box_pubkey))
-      : "Creator";
+      : trust.creator;
     card.appendChild(
-      el("div", {}, [`${shortId(m.box_pubkey)} · ${inviter} · ${trust.joinedAgo(durationSince(m.joined_at))}`]),
+      el("div", {}, [
+        `${shortId(m.box_pubkey)} · ${inviter} · ${trust.joinedAgo(durationSince(m.joined_at))}`,
+      ]),
     );
+
     const badges = el("div", { class: "badges" });
-    badges.appendChild(el("span", { class: "badge" }, [trust.continuityVerified]));
-    badges.appendChild(el("span", { class: "badge" }, [trust.unverified]));
-    if (isNew(m.joined_at)) badges.appendChild(el("span", { class: "badge" }, [trust.newMember]));
-    if (m.invited_by_box_pubkey) {
-      const inviterRow = members.find((x) => x.box_pubkey === m.invited_by_box_pubkey);
-      if (inviterRow && isNew(inviterRow.joined_at)) {
-        badges.appendChild(el("span", { class: "badge" }, [trust.newInviter]));
+    if (removed) {
+      badges.appendChild(el("span", { class: "badge" }, [trust.removed]));
+    } else {
+      badges.appendChild(el("span", { class: "badge" }, [trust.continuityVerified]));
+      badges.appendChild(el("span", { class: "badge" }, [trust.unverified]));
+      if (isNew(m.joined_at)) {
+        badges.appendChild(el("span", { class: "badge" }, [trust.newMember]));
+      }
+      if (m.invited_by_box_pubkey) {
+        const inviterRow = members.find(
+          (x) => x.box_pubkey === m.invited_by_box_pubkey,
+        );
+        if (inviterRow && isNew(inviterRow.joined_at)) {
+          badges.appendChild(el("span", { class: "badge" }, [trust.newInviter]));
+        }
       }
     }
     card.appendChild(badges);
+
+    // Remove button: creator-only, not for self, not for already-removed.
+    const meKeys = roomkey.read(roomIdB64);
+    const isMe = meKeys && bytesEqual(b64decode(m.box_pubkey), meKeys.boxPub);
+    if (amCreator && !removed && !isMe) {
+      const btn = el("button", { type: "button", class: "remove-btn" }, ["Remove"]);
+      btn.addEventListener("click", () => removeMember(m));
+      card.appendChild(btn);
+    }
+
     membersList.appendChild(card);
+  }
+
+  // Footer: epoch label so users can see when a key has been rotated.
+  membersList.appendChild(
+    el("p", { class: "muted epoch-label" }, [trust.keyEpoch(currentEpoch)]),
+  );
+}
+
+async function removeMember(target: MemberView): Promise<void> {
+  if (!confirm(
+      `Remove ${shortId(target.box_pubkey)}? This will rotate the room key. They keep any messages they've already seen.`,
+    )) {
+    return;
+  }
+  const keys = roomkey.read(roomIdB64);
+  if (!keys || keys.roomKeys.length === 0) {
+    alert("Cannot rekey: no current room key on this device.");
+    return;
+  }
+
+  // 1. Generate a fresh room key.
+  const sodiumLib = await (await import("../lib/sodium")).sodium();
+  const newKey = sodiumLib.randombytes_buf(32);
+
+  // 2. Wrap for every surviving member (everyone except target and removed).
+  const survivors = memberCache.filter(
+    (m) => !m.removed_at && m.box_pubkey !== target.box_pubkey,
+  );
+  const wraps: Array<{ for_box_pubkey: string; wrapped_key: string }> = [];
+  for (const m of survivors) {
+    const wrapped = await roomkey.wrapRoomKey(newKey, b64decode(m.box_pubkey));
+    wraps.push({
+      for_box_pubkey: m.box_pubkey,
+      wrapped_key: b64encode(wrapped),
+    });
+  }
+
+  // 3. Authenticated remove-and-rekey request.
+  const ts = Math.floor(Date.now() / 1000);
+  const sig = await roomkey.signRemoveRequest(
+    roomIdBytes,
+    ts,
+    b64decode(target.box_pubkey),
+    keys.sigPriv,
+  );
+  try {
+    const resp = await api.removeMember(roomIdB64, {
+      remover_sig_pubkey: b64encode(keys.sigPub),
+      ts,
+      sig: b64encode(sig),
+      target_box_pubkey: target.box_pubkey,
+      new_wrapped_keys: wraps,
+    });
+    // 4. Append the new key locally. Future sends use it; old keys still
+    //    decrypt historical messages.
+    roomkey.appendRoomKey(roomIdB64, newKey, resp.current_epoch);
+    await tickMembers();
+  } catch (e) {
+    alert(`Remove failed: ${(e as Error).message}`);
   }
 }
 
@@ -148,11 +243,15 @@ function shortId(b64: string): string {
 }
 
 async function maybeGrantPending(keys: roomkey.RoomKeys, members: MemberView[]): Promise<void> {
-  if (!keys.roomKey) return;
+  // Wrap for any pending (newly-joined) member with the current room key.
+  if (keys.roomKeys.length === 0) return;
+  const currentKey = keys.roomKeys[keys.roomKeys.length - 1];
+  const myB64 = b64encode(keys.boxPub);
   for (const m of members) {
+    if (m.removed_at) continue;
     if (m.wrapped_key) continue;
-    if (m.box_pubkey === b64encode(keys.boxPub)) continue;
-    const wrapped = await roomkey.wrapRoomKey(keys.roomKey, b64decode(m.box_pubkey));
+    if (m.box_pubkey === myB64) continue;
+    const wrapped = await roomkey.wrapRoomKey(currentKey, b64decode(m.box_pubkey));
     try {
       await api.wrap(roomIdB64, {
         for_box_pubkey: m.box_pubkey,
@@ -160,8 +259,29 @@ async function maybeGrantPending(keys: roomkey.RoomKeys, members: MemberView[]):
         inviter_box_pubkey: b64encode(keys.boxPub),
       });
     } catch {
-      // Another member may have raced us; ignore and re-poll.
+      // Race: another member granted first; ignore.
     }
+  }
+}
+
+async function maybeAdoptNewEpoch(
+  keys: roomkey.RoomKeys,
+  members: MemberView[],
+): Promise<void> {
+  if (currentEpoch <= keys.lastEpoch) return;
+  const myB64 = b64encode(keys.boxPub);
+  const me = members.find((m) => m.box_pubkey === myB64);
+  if (!me?.wrapped_key) return;
+  try {
+    const newKey = await roomkey.unwrapRoomKey(
+      b64decode(me.wrapped_key),
+      keys.boxPub,
+      keys.boxPriv,
+    );
+    roomkey.appendRoomKey(roomIdB64, newKey, currentEpoch);
+  } catch {
+    // The wrapped key on the server may still be the old one for one
+    // poll cycle if our row hasn't been updated yet. Nothing to do.
   }
 }
 
@@ -175,17 +295,16 @@ async function maybeUnwrap(keys: roomkey.RoomKeys, members: MemberView[]): Promi
       keys.boxPub,
       keys.boxPriv,
     );
-    roomkey.persistRoomKey(roomIdB64, roomKey);
+    roomkey.appendRoomKey(roomIdB64, roomKey, currentEpoch);
     location.reload();
   } catch (e) {
     text(provenanceText, `Failed to unwrap room key: ${(e as Error).message}`);
   }
 }
 
-async function tickMessages(keys: roomkey.RoomKeys): Promise<void> {
-  if (!keys.roomKey) return;
+async function tickMessages(): Promise<void> {
   const fresh = roomkey.read(roomIdB64);
-  if (!fresh?.roomKey) return;
+  if (!fresh || fresh.roomKeys.length === 0) return;
   const ts = Math.floor(Date.now() / 1000);
   const sig = await roomkey.signListRequest(roomIdBytes, ts, fresh.sigPriv);
   let resp: { messages: MessageView[] };
@@ -200,12 +319,12 @@ async function tickMessages(keys: roomkey.RoomKeys): Promise<void> {
     return;
   }
   for (const m of resp.messages) {
-    await renderMessage(m, fresh.roomKey);
+    await renderMessage(m, fresh.roomKeys);
     lastMessageId = m.message_id;
   }
 }
 
-async function renderMessage(m: MessageView, roomKey: Uint8Array): Promise<void> {
+async function renderMessage(m: MessageView, roomKeys: Uint8Array[]): Promise<void> {
   const senderPub = b64decode(m.sender_sig_pubkey);
   const member = memberCache.find((x) => x.sig_pubkey === m.sender_sig_pubkey);
   const fromLabel = member ? `from ${shortId(member.box_pubkey)}` : "from unknown member";
@@ -227,7 +346,7 @@ async function renderMessage(m: MessageView, roomKey: Uint8Array): Promise<void>
         b64decode(m.ciphertext),
         b64decode(m.nonce),
         roomIdBytes,
-        roomKey,
+        roomKeys,
       );
       bodyText = fromUtf8(pt);
     } catch {

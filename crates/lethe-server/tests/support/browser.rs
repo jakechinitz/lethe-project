@@ -174,6 +174,22 @@ pub fn decrypt_message(
         .expect("decrypt")
 }
 
+pub fn sign_remove_request(
+    room_id: &[u8],
+    ts: i64,
+    target_box_pubkey: &[u8],
+    sk: &SigningSecretKey,
+) -> Signature {
+    let mut payload = Vec::with_capacity(16 + room_id.len() + 8 + 32);
+    payload.extend_from_slice(b"lethe-remove-v1\x00");
+    payload.extend_from_slice(room_id);
+    payload.extend_from_slice(&ts.to_le_bytes());
+    payload.extend_from_slice(target_box_pubkey);
+    let mut sig: Signature = [0u8; 64];
+    crypto_sign_detached(&mut sig, &payload, sk).expect("sign");
+    sig
+}
+
 pub fn sign_list_request(
     room_id: &[u8],
     ts: i64,

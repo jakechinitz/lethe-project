@@ -12,6 +12,10 @@ export const trust = {
   unverified: "Unverified",
   newMember: "New member",
   newInviter: "New inviter",
+  removed: "Removed",
+  creator: "Creator",
+  keyEpoch: (n: number) =>
+    n === 0 ? "Original key" : `Key rotated ${n} time${n === 1 ? "" : "s"}`,
 } as const;
 
 export const limitations = {

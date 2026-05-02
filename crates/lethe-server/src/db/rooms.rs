@@ -156,7 +156,9 @@ pub async fn is_member(
 ) -> Result<bool, sqlx::Error> {
     let row: Option<(i32,)> = sqlx::query_as(
         "SELECT 1 FROM room_members
-         WHERE room_id = $1 AND member_sig_pubkey = $2",
+         WHERE room_id = $1
+           AND member_sig_pubkey = $2
+           AND removed_at IS NULL",
     )
     .bind(room_id)
     .bind(sig_pubkey)
@@ -165,8 +167,31 @@ pub async fn is_member(
     Ok(row.is_some())
 }
 
-/// Returns the joined_at timestamp of a member identified by their sig
-/// pubkey. `None` if not a member of this room.
+/// True iff `sig_pubkey` is the creator of this room (the only member
+/// without an inviter). Removed creators are still considered creator
+/// for this check — they're the only authority that can re-issue keys.
+pub async fn is_creator_by_sig(
+    db: &PgPool,
+    room_id: &[u8],
+    sig_pubkey: &[u8],
+) -> Result<bool, sqlx::Error> {
+    let row: Option<(i32,)> = sqlx::query_as(
+        "SELECT 1 FROM room_members
+         WHERE room_id = $1
+           AND member_sig_pubkey = $2
+           AND invited_by_box_pubkey IS NULL
+           AND removed_at IS NULL",
+    )
+    .bind(room_id)
+    .bind(sig_pubkey)
+    .fetch_optional(db)
+    .await?;
+    Ok(row.is_some())
+}
+
+/// Returns the joined_at timestamp of a still-active member identified
+/// by their sig pubkey. `None` if not a member of this room or if
+/// removed.
 pub async fn joined_at_for_sig_member(
     db: &PgPool,
     room_id: &[u8],
@@ -174,7 +199,9 @@ pub async fn joined_at_for_sig_member(
 ) -> Result<Option<OffsetDateTime>, sqlx::Error> {
     let row: Option<(OffsetDateTime,)> = sqlx::query_as(
         "SELECT joined_at FROM room_members
-         WHERE room_id = $1 AND member_sig_pubkey = $2",
+         WHERE room_id = $1
+           AND member_sig_pubkey = $2
+           AND removed_at IS NULL",
     )
     .bind(room_id)
     .bind(sig_pubkey)
@@ -190,7 +217,9 @@ pub async fn is_member_by_box(
 ) -> Result<bool, sqlx::Error> {
     let row: Option<(i32,)> = sqlx::query_as(
         "SELECT 1 FROM room_members
-         WHERE room_id = $1 AND member_box_pubkey = $2",
+         WHERE room_id = $1
+           AND member_box_pubkey = $2
+           AND removed_at IS NULL",
     )
     .bind(room_id)
     .bind(box_pubkey)
@@ -206,12 +235,13 @@ struct MemberRow {
     wrapped_key: Option<Vec<u8>>,
     joined_at: OffsetDateTime,
     invited_by_box_pubkey: Option<Vec<u8>>,
+    removed_at: Option<OffsetDateTime>,
 }
 
 pub async fn list_members(db: &PgPool, room_id: &[u8]) -> Result<Vec<MemberView>, sqlx::Error> {
     let rows: Vec<MemberRow> = sqlx::query_as(
         "SELECT member_box_pubkey, member_sig_pubkey, wrapped_key, joined_at,
-                invited_by_box_pubkey
+                invited_by_box_pubkey, removed_at
          FROM room_members
          WHERE room_id = $1
          ORDER BY joined_at ASC",
@@ -227,8 +257,107 @@ pub async fn list_members(db: &PgPool, room_id: &[u8]) -> Result<Vec<MemberView>
             wrapped_key: r.wrapped_key.as_ref().map(|k| ids::b64(k)),
             joined_at: CoarseTime(r.joined_at),
             invited_by_box_pubkey: r.invited_by_box_pubkey.as_ref().map(|k| ids::b64(k)),
+            removed_at: r.removed_at.map(CoarseTime),
         })
         .collect())
+}
+
+pub async fn current_epoch(db: &PgPool, room_id: &[u8]) -> Result<i32, sqlx::Error> {
+    let row: (i32,) = sqlx::query_as("SELECT current_epoch FROM rooms WHERE id = $1")
+        .bind(room_id)
+        .fetch_one(db)
+        .await?;
+    Ok(row.0)
+}
+
+/// Soft-removes a member, bumps the room's epoch, and overwrites the
+/// `wrapped_key` of every still-active member with the new wrap supplied
+/// by the caller. All in one transaction so observers either see the
+/// pre-rekey state or the fully-rotated state, never a half-applied one.
+///
+/// Returns the new epoch. Errors:
+///   - `target` is not a current member of the room
+///   - any `for_box_pubkey` in `wraps` is not a current non-target member
+///   - the set of `wraps` does not exactly match the surviving member set
+pub async fn remove_and_rekey(
+    db: &PgPool,
+    room_id: &[u8],
+    target_box_pubkey: &[u8],
+    wraps: &[(Vec<u8>, Vec<u8>)],
+    now: OffsetDateTime,
+) -> Result<i32, sqlx::Error> {
+    let mut tx = db.begin().await?;
+
+    // 1. Soft-remove the target. Must currently be active.
+    let res = sqlx::query(
+        "UPDATE room_members
+         SET removed_at = $3
+         WHERE room_id = $1
+           AND member_box_pubkey = $2
+           AND removed_at IS NULL",
+    )
+    .bind(room_id)
+    .bind(target_box_pubkey)
+    .bind(now)
+    .execute(&mut *tx)
+    .await?;
+    if res.rows_affected() != 1 {
+        return Err(sqlx::Error::RowNotFound);
+    }
+
+    // 2. Snapshot of surviving members. Used to check the wraps cover
+    //    every remaining member exactly.
+    let survivors: Vec<(Vec<u8>,)> = sqlx::query_as(
+        "SELECT member_box_pubkey FROM room_members
+         WHERE room_id = $1 AND removed_at IS NULL",
+    )
+    .bind(room_id)
+    .fetch_all(&mut *tx)
+    .await?;
+
+    if survivors.len() != wraps.len() {
+        return Err(sqlx::Error::Protocol(
+            "wrap count mismatch with surviving member count".into(),
+        ));
+    }
+    let survivor_set: std::collections::HashSet<&[u8]> =
+        survivors.iter().map(|(k,)| k.as_slice()).collect();
+    for (pk, _) in wraps {
+        if !survivor_set.contains(pk.as_slice()) {
+            return Err(sqlx::Error::Protocol(
+                "wrap target is not a surviving member".into(),
+            ));
+        }
+    }
+
+    // 3. Apply each new wrap.
+    for (for_box, new_wrapped) in wraps {
+        sqlx::query(
+            "UPDATE room_members
+             SET wrapped_key = $3
+             WHERE room_id = $1
+               AND member_box_pubkey = $2
+               AND removed_at IS NULL",
+        )
+        .bind(room_id)
+        .bind(for_box)
+        .bind(new_wrapped)
+        .execute(&mut *tx)
+        .await?;
+    }
+
+    // 4. Bump the epoch.
+    let row: (i32,) = sqlx::query_as(
+        "UPDATE rooms SET current_epoch = current_epoch + 1
+         WHERE id = $1
+         RETURNING current_epoch",
+    )
+    .bind(room_id)
+    .fetch_one(&mut *tx)
+    .await?;
+
+    tx.commit().await?;
+    Ok(row.0)
 }
 
 pub struct NewMessage<'a> {

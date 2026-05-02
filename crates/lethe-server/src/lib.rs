@@ -63,7 +63,8 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/rooms/:room_id/messages/list",
             post(routes::rooms::list_messages),
-        );
+        )
+        .route("/rooms/:room_id/remove", post(routes::rooms::remove));
 
     let pages = Router::new()
         .route("/", get(routes::pages::index))

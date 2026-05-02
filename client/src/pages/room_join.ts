@@ -24,7 +24,7 @@ btn.addEventListener("click", async () => {
       box_pubkey: b64encode(k.boxPub),
       sig_pubkey: b64encode(k.sigPub),
     });
-    roomkey.persist(resp.room_id, { ...k, roomKey: null });
+    roomkey.persist(resp.room_id, { ...k, roomKeys: [], lastEpoch: 0 });
     openRoom.href = `/r/${resp.room_id}`;
     openLine.hidden = false;
     text(

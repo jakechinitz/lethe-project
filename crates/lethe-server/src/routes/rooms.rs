@@ -64,3 +64,13 @@ pub async fn list_messages(
         logic::rooms::list_messages_authed(&state.db, &room_id, req).await?,
     ))
 }
+
+pub async fn remove(
+    State(state): State<AppState>,
+    Path(room_id): Path<String>,
+    Json(req): Json<RemoveMemberReq>,
+) -> AppResult<Json<RemoveMemberResp>> {
+    Ok(Json(
+        logic::rooms::remove_and_rekey(&state.db, &room_id, req).await?,
+    ))
+}

@@ -25,8 +25,8 @@ form.addEventListener("submit", async (ev) => {
   ev.preventDefault();
   text(status, "Generating keys…");
   const k = await roomkey.generateForNewRoom();
-  if (!k.roomKey) throw new Error("missing room key");
-  const wrappedSelf = await roomkey.wrapRoomKey(k.roomKey, k.boxPub);
+  const currentRoomKey = k.roomKeys[k.roomKeys.length - 1];
+  const wrappedSelf = await roomkey.wrapRoomKey(currentRoomKey, k.boxPub);
 
   const body: Record<string, unknown> = {
     creator_box_pubkey: b64encode(k.boxPub),

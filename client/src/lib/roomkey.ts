@@ -1,14 +1,30 @@
 // Per-room key material: X25519 box keypair (used for sealed-box wrapping
 // of the room key), Ed25519 sig keypair (used to authenticate messages),
-// and the symmetric room key. This file is the only module that touches
-// `localStorage` for room keys.
+// and the symmetric room key — historicized so that after a rekey we can
+// still decrypt messages from before the rotation.
+//
+// This file is the only module that touches `localStorage` for room keys.
 
 import { sodium } from "./sodium";
 import { b64decode, b64encode, concat, utf8 } from "./b64";
 
 const PREFIX = "lethe.room.";
 
-interface StoredRoom {
+interface StoredRoomV2 {
+  v: 2;
+  boxPub: string;
+  boxPriv: string;
+  sigPub: string;
+  sigPriv: string;
+  /// Most-recent key is last. Send always uses the last; receive tries
+  /// each (newest first) and accepts the first that decrypts.
+  roomKeys: string[];
+  /// Last `current_epoch` we observed from the server. Used to detect
+  /// rekeys and pull in the new wrapped_key.
+  lastEpoch: number;
+}
+
+interface StoredRoomV1 {
   boxPub: string;
   boxPriv: string;
   sigPub: string;
@@ -21,19 +37,36 @@ export interface RoomKeys {
   boxPriv: Uint8Array;
   sigPub: Uint8Array;
   sigPriv: Uint8Array;
-  roomKey: Uint8Array | null;
+  /// Most recent last. Empty until at least one key has been received.
+  roomKeys: Uint8Array[];
+  lastEpoch: number;
 }
 
 function storageKey(roomIdB64: string): string {
   return PREFIX + roomIdB64;
 }
 
-function load(roomIdB64: string): StoredRoom | null {
+function loadRaw(roomIdB64: string): StoredRoomV2 | null {
   const raw = localStorage.getItem(storageKey(roomIdB64));
-  return raw ? (JSON.parse(raw) as StoredRoom) : null;
+  if (!raw) return null;
+  const parsed = JSON.parse(raw);
+  if (parsed && parsed.v === 2) return parsed as StoredRoomV2;
+  // Migrate v1 → v2 in place.
+  const v1 = parsed as StoredRoomV1;
+  const v2: StoredRoomV2 = {
+    v: 2,
+    boxPub: v1.boxPub,
+    boxPriv: v1.boxPriv,
+    sigPub: v1.sigPub,
+    sigPriv: v1.sigPriv,
+    roomKeys: v1.roomKey ? [v1.roomKey] : [],
+    lastEpoch: 0,
+  };
+  localStorage.setItem(storageKey(roomIdB64), JSON.stringify(v2));
+  return v2;
 }
 
-function save(roomIdB64: string, s: StoredRoom): void {
+function save(roomIdB64: string, s: StoredRoomV2): void {
   localStorage.setItem(storageKey(roomIdB64), JSON.stringify(s));
 }
 
@@ -47,11 +80,12 @@ export async function generateForNewRoom(): Promise<RoomKeys> {
     boxPriv: boxKp.privateKey,
     sigPub: sigKp.publicKey,
     sigPriv: sigKp.privateKey,
-    roomKey,
+    roomKeys: [roomKey],
+    lastEpoch: 0,
   };
 }
 
-export async function generateForJoin(): Promise<Omit<RoomKeys, "roomKey">> {
+export async function generateForJoin(): Promise<Omit<RoomKeys, "roomKeys" | "lastEpoch">> {
   const s = await sodium();
   const boxKp = s.crypto_box_keypair();
   const sigKp = s.crypto_sign_keypair();
@@ -65,30 +99,52 @@ export async function generateForJoin(): Promise<Omit<RoomKeys, "roomKey">> {
 
 export function persist(roomIdB64: string, k: RoomKeys): void {
   save(roomIdB64, {
+    v: 2,
     boxPub: b64encode(k.boxPub),
     boxPriv: b64encode(k.boxPriv),
     sigPub: b64encode(k.sigPub),
     sigPriv: b64encode(k.sigPriv),
-    roomKey: k.roomKey ? b64encode(k.roomKey) : null,
+    roomKeys: k.roomKeys.map(b64encode),
+    lastEpoch: k.lastEpoch,
   });
 }
 
 export function read(roomIdB64: string): RoomKeys | null {
-  const stored = load(roomIdB64);
+  const stored = loadRaw(roomIdB64);
   if (!stored) return null;
   return {
     boxPub: b64decode(stored.boxPub),
     boxPriv: b64decode(stored.boxPriv),
     sigPub: b64decode(stored.sigPub),
     sigPriv: b64decode(stored.sigPriv),
-    roomKey: stored.roomKey ? b64decode(stored.roomKey) : null,
+    roomKeys: stored.roomKeys.map(b64decode),
+    lastEpoch: stored.lastEpoch,
   };
 }
 
-export function persistRoomKey(roomIdB64: string, roomKey: Uint8Array): void {
-  const stored = load(roomIdB64);
+/// Appends a freshly-unwrapped room key, deduplicating by raw bytes so
+/// repeated calls (e.g. on every poll) don't grow the array.
+export function appendRoomKey(
+  roomIdB64: string,
+  newKey: Uint8Array,
+  newEpoch: number,
+): void {
+  const stored = loadRaw(roomIdB64);
   if (!stored) throw new Error("no stored keys for room");
-  stored.roomKey = b64encode(roomKey);
+  const newKeyB64 = b64encode(newKey);
+  if (!stored.roomKeys.includes(newKeyB64)) {
+    stored.roomKeys.push(newKeyB64);
+  }
+  if (newEpoch > stored.lastEpoch) {
+    stored.lastEpoch = newEpoch;
+  }
+  save(roomIdB64, stored);
+}
+
+export function setLastEpoch(roomIdB64: string, epoch: number): void {
+  const stored = loadRaw(roomIdB64);
+  if (!stored) return;
+  stored.lastEpoch = epoch;
   save(roomIdB64, stored);
 }
 
@@ -110,12 +166,15 @@ export async function unwrapRoomKey(
   return s.crypto_box_seal_open(wrapped, myBoxPub, myBoxPriv);
 }
 
+/// Encrypts under the most recent room key.
 export async function encryptMessage(
   plaintext: string,
   roomId: Uint8Array,
-  roomKey: Uint8Array,
+  roomKeys: Uint8Array[],
 ): Promise<{ nonce: Uint8Array; ciphertext: Uint8Array }> {
   const s = await sodium();
+  if (roomKeys.length === 0) throw new Error("no room keys available");
+  const roomKey = roomKeys[roomKeys.length - 1];
   const nonce = s.randombytes_buf(s.crypto_aead_xchacha20poly1305_ietf_NPUBBYTES);
   const ciphertext = s.crypto_aead_xchacha20poly1305_ietf_encrypt(
     utf8(plaintext),
@@ -127,20 +186,29 @@ export async function encryptMessage(
   return { nonce, ciphertext };
 }
 
+/// Tries each historicized key (newest first); returns the plaintext from
+/// the first that decrypts. Throws if none work.
 export async function decryptMessage(
   ciphertext: Uint8Array,
   nonce: Uint8Array,
   roomId: Uint8Array,
-  roomKey: Uint8Array,
+  roomKeys: Uint8Array[],
 ): Promise<Uint8Array> {
   const s = await sodium();
-  return s.crypto_aead_xchacha20poly1305_ietf_decrypt(
-    null,
-    ciphertext,
-    roomId,
-    nonce,
-    roomKey,
-  );
+  for (let i = roomKeys.length - 1; i >= 0; i--) {
+    try {
+      return s.crypto_aead_xchacha20poly1305_ietf_decrypt(
+        null,
+        ciphertext,
+        roomId,
+        nonce,
+        roomKeys[i],
+      );
+    } catch {
+      continue;
+    }
+  }
+  throw new Error("no room key decrypts this message");
 }
 
 export async function signMessageEnvelope(
@@ -174,14 +242,39 @@ export async function signListRequest(
   sigPriv: Uint8Array,
 ): Promise<Uint8Array> {
   const s = await sodium();
-  const tsBytes = new Uint8Array(8);
-  let ts = BigInt(unixTs);
-  for (let i = 0; i < 8; i++) {
-    tsBytes[i] = Number(ts & 0xffn);
-    ts >>= 8n;
-  }
+  const tsBytes = tsLeBytes(unixTs);
   const payload = concat(utf8("lethe-list-v1\x00"), roomId, tsBytes);
   return s.crypto_sign_detached(payload, sigPriv);
+}
+
+/// Signs a remove-and-rekey request:
+///   `b"lethe-remove-v1\x00" || room_id || ts_le8 || target_box_pubkey`.
+/// Server additionally checks the signer is the creator.
+export async function signRemoveRequest(
+  roomId: Uint8Array,
+  unixTs: number,
+  targetBoxPubkey: Uint8Array,
+  sigPriv: Uint8Array,
+): Promise<Uint8Array> {
+  const s = await sodium();
+  const tsBytes = tsLeBytes(unixTs);
+  const payload = concat(
+    utf8("lethe-remove-v1\x00"),
+    roomId,
+    tsBytes,
+    targetBoxPubkey,
+  );
+  return s.crypto_sign_detached(payload, sigPriv);
+}
+
+function tsLeBytes(unixTs: number): Uint8Array {
+  const out = new Uint8Array(8);
+  let ts = BigInt(unixTs);
+  for (let i = 0; i < 8; i++) {
+    out[i] = Number(ts & 0xffn);
+    ts >>= 8n;
+  }
+  return out;
 }
 
 export async function verifyProvenance(
@@ -197,3 +290,4 @@ export async function verifyProvenance(
   );
   return s.crypto_sign_verify_detached(sig, payload, creatorThreadPubkey);
 }
+

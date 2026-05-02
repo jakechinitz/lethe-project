@@ -52,6 +52,12 @@ pub struct WrapKeyReq {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MembersResp {
+    pub members: Vec<MemberView>,
+    pub current_epoch: i32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemberView {
     pub box_pubkey: B64,
     pub sig_pubkey: B64,
@@ -61,11 +67,55 @@ pub struct MemberView {
     pub joined_at: CoarseTime,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub invited_by_box_pubkey: Option<B64>,
+    /// `Some(ts)` if this member has been removed from the room. Removed
+    /// members cannot post or list messages but their entry remains for
+    /// invite-chain auditability.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub removed_at: Option<CoarseTime>,
+}
+
+/// Body of `POST /api/rooms/:room_id/remove`. The creator removes a
+/// member AND rekeys the room in one atomic call: the request body
+/// carries the new `wrapped_key` for every still-active member.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RemoveMemberReq {
+    pub remover_sig_pubkey: B64,
+    pub ts: i64,
+    pub sig: B64,
+    pub target_box_pubkey: B64,
+    pub new_wrapped_keys: Vec<RewrapEntry>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MembersResp {
-    pub members: Vec<MemberView>,
+pub struct RewrapEntry {
+    pub for_box_pubkey: B64,
+    pub wrapped_key: B64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RemoveMemberResp {
+    pub current_epoch: i32,
+}
+
+/// Canonical bytes signed for a remove-and-rekey request.
+///
+/// The `new_wrapped_keys` aren't included in the payload because the only
+/// signer with authority to sign this is the creator, the server validates
+/// `for_box_pubkey` against the actual member list before applying any
+/// change, and including them would require a stable serialization order.
+///
+/// Server checks: `(now - ts).abs() <= 60`.
+pub fn canonical_remove_request(
+    room_id: &[u8],
+    ts: i64,
+    target_box_pubkey: &[u8],
+) -> Vec<u8> {
+    let mut buf = Vec::with_capacity(16 + room_id.len() + 8 + 32);
+    buf.extend_from_slice(b"lethe-remove-v1\x00");
+    buf.extend_from_slice(room_id);
+    buf.extend_from_slice(&ts.to_le_bytes());
+    buf.extend_from_slice(target_box_pubkey);
+    buf
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

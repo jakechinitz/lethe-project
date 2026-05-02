@@ -38,6 +38,18 @@ pub fn verify_room_provenance(
     verify_ed25519(creator_thread_pubkey, provenance_sig, &payload)
 }
 
+/// Verifies the signature on a remove-and-rekey request.
+pub fn verify_remove_request(
+    remover_sig_pubkey: &[u8],
+    sig: &[u8],
+    room_id: &[u8],
+    ts: i64,
+    target_box_pubkey: &[u8],
+) -> Result<(), CryptoError> {
+    let payload = rooms::canonical_remove_request(room_id, ts, target_box_pubkey);
+    verify_ed25519(remover_sig_pubkey, sig, &payload)
+}
+
 /// Verifies the signature on an authenticated message-list request.
 pub fn verify_list_request(
     requester_sig_pubkey: &[u8],

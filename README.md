@@ -82,6 +82,29 @@ The headline test is `tests/room_roundtrip.rs::room_e2ee_roundtrip_with_provenan
 which drives two clients through the API, decrypts a message round-tripped
 through the server, and asserts no plaintext was stored anywhere.
 
+## Removing members and rotating room keys
+
+The room creator (the only member with no inviter) can remove any other
+member via `POST /api/rooms/:room_id/remove`. The request is signed
+with the creator's per-room Ed25519 sig key over a canonical payload
+containing the room id, a fresh timestamp (±60 s window), and the
+target's box pubkey. Server checks the sig, verifies the signer is the
+creator, and runs an atomic transaction:
+
+1. Soft-remove the target (`removed_at = now()`); they immediately
+   fail every `is_member` check, so they cannot post or list messages.
+2. Overwrite each surviving member's `wrapped_key` with a fresh wrap of
+   the new symmetric room key the caller supplies.
+3. Bump `rooms.current_epoch`.
+
+Surviving members detect the new epoch on their next member poll,
+unwrap their fresh `wrapped_key`, and append it to a per-room key
+history in `localStorage`. Sends always use the most recent key;
+receives try each historical key (newest first), so messages from
+before a rekey stay readable on still-present devices. The removed
+member retains whatever they had locally — encryption can't take that
+back — but every message after the rekey is opaque to them.
+
 ## Storage and retention
 
 Public posts and private-room ciphertext both live in Postgres. Server
