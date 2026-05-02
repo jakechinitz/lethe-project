@@ -13,6 +13,10 @@ const SIG_LEN: usize = 64;
 const NONCE_LEN: usize = 24;
 const MAX_CIPHERTEXT: usize = 64 * 1024;
 const MAX_WRAPPED_KEY: usize = 256;
+/// Hard cap on simultaneously-active members per room. Removed members
+/// don't count. Re-joining as the same box pubkey is idempotent and
+/// doesn't push past the cap.
+pub const MAX_ROOM_MEMBERS: i64 = 50;
 
 pub async fn create(db: &PgPool, req: CreateRoomReq) -> AppResult<CreateRoomResp> {
     let creator_box = decode_pubkey(&req.creator_box_pubkey, "creator_box_pubkey")?;
@@ -92,6 +96,18 @@ pub async fn join(
     let meta = db::rooms::meta_by_invite(db, invite_code)
         .await?
         .ok_or(AppError::NotFound)?;
+
+    // Cap the room size. Re-joining as the same box pubkey is idempotent
+    // (the INSERT is ON CONFLICT DO NOTHING), so allow that even at the
+    // cap by checking membership first.
+    let already_member = db::rooms::is_member_by_box(db, &meta.id, &box_pk).await?;
+    if !already_member {
+        let count = db::rooms::active_member_count(db, &meta.id).await?;
+        if count >= MAX_ROOM_MEMBERS {
+            return Err(AppError::Conflict("room is at the 50-member cap"));
+        }
+    }
+
     let now = ltime::now_coarse();
     db::rooms::add_member(db, &meta.id, &box_pk, &sig_pk, now).await?;
     let members = db::rooms::list_members(db, &meta.id).await?;
@@ -160,6 +176,10 @@ pub async fn remove_and_rekey(
         return Err(AppError::BadRequest("ts outside ±60s window"));
     }
     crypto::verify_remove_request(&remover_pk, &sig, &room_id, req.ts, &target_box)?;
+
+    if !db::nonces::record(db, "remove", &remover_pk, req.ts).await? {
+        return Err(AppError::Conflict("replay: this signature was already used"));
+    }
 
     if !db::rooms::is_creator_by_sig(db, &room_id, &remover_pk).await? {
         return Err(AppError::Forbidden(
@@ -286,6 +306,10 @@ pub async fn list_messages_authed(
         return Err(AppError::BadRequest("ts outside ±60s window"));
     }
     crypto::verify_list_request(&requester_pk, &sig, &room_id, req.ts)?;
+
+    if !db::nonces::record(db, "list", &requester_pk, req.ts).await? {
+        return Err(AppError::Conflict("replay: this signature was already used"));
+    }
 
     let joined_at = db::rooms::joined_at_for_sig_member(db, &room_id, &requester_pk)
         .await?

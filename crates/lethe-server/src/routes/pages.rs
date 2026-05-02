@@ -170,11 +170,11 @@ pub async fn index(
 }
 
 #[derive(Template)]
-#[template(path = "about.html")]
-struct AboutPage {}
+#[template(path = "my_rooms.html")]
+struct MyRoomsPage {}
 
-pub async fn about() -> AppResult<Response> {
-    Ok(AboutPage {}.into_response())
+pub async fn my_rooms() -> AppResult<Response> {
+    Ok(MyRoomsPage {}.into_response())
 }
 
 #[derive(Template)]

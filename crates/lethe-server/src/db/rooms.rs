@@ -118,6 +118,20 @@ pub async fn add_member(
     Ok(())
 }
 
+pub async fn active_member_count(
+    db: &PgPool,
+    room_id: &[u8],
+) -> Result<i64, sqlx::Error> {
+    let row: (i64,) = sqlx::query_as(
+        "SELECT count(*) FROM room_members
+         WHERE room_id = $1 AND removed_at IS NULL",
+    )
+    .bind(room_id)
+    .fetch_one(db)
+    .await?;
+    Ok(row.0)
+}
+
 /// Stores a wrapped room key for a pending member and records who invited
 /// them (the inviter must already be a member of this room).
 pub async fn grant_wrap(

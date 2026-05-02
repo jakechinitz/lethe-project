@@ -79,19 +79,68 @@ function render(posts: PostView[]): void {
     return;
   }
   for (const p of posts) {
-    const meta_ = el("div", { class: "meta" }, [
-      `#${p.seq}`,
-      ...(p.pubkey
-        ? [
-            ` · `,
-            p.signer_first_seq && p.signer_first_seq !== p.seq
-              ? `same anon as #${p.signer_first_seq}`
-              : `same anon (this is the first signed post)`,
-          ]
-        : [` · anonymous`]),
-    ]);
-    const body = el("div", { class: "body" }, [p.body]);
-    postsEl.appendChild(el("article", { class: "post" }, [meta_, body]));
+    postsEl.appendChild(renderPost(p));
+  }
+  scrollToHashTarget();
+}
+
+function renderPost(p: PostView): HTMLElement {
+  const isOp = p.seq === 1;
+  const article = el("article", { class: isOp ? "post op" : "post" });
+  article.id = `p${p.seq}`;
+
+  const seqLink = el("a", {}, [`#${p.seq}`]) as HTMLAnchorElement;
+  seqLink.href = `#p${p.seq}`;
+  seqLink.className = "seq-link";
+  seqLink.title = "Click to copy a deep link to this post";
+  seqLink.addEventListener("click", (ev) => {
+    ev.preventDefault();
+    const url = `${location.origin}${location.pathname}#p${p.seq}`;
+    history.replaceState(null, "", `#p${p.seq}`);
+    if (navigator.clipboard) {
+      void navigator.clipboard.writeText(url);
+    }
+    seqLink.classList.add("copied");
+    setTimeout(() => seqLink.classList.remove("copied"), 1200);
+  });
+
+  const created = new Date(p.created_at);
+  const ts = el("time", { title: created.toISOString(), dateTime: p.created_at }, [
+    `${humanAgo(created)} ago`,
+  ]);
+
+  const identity = p.pubkey
+    ? p.signer_first_seq && p.signer_first_seq !== p.seq
+      ? `same anon as #${p.signer_first_seq}`
+      : "same anon (first signed post)"
+    : "anonymous";
+
+  const meta_ = el("div", { class: "meta" }, [seqLink, " · ", ts, " · ", identity]);
+  const body = el("div", { class: "body" }, [p.body]);
+
+  article.appendChild(meta_);
+  article.appendChild(body);
+  return article;
+}
+
+function humanAgo(then: Date): string {
+  const seconds = Math.max(0, Math.round((Date.now() - then.getTime()) / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 48) return `${hours}h`;
+  const days = Math.round(hours / 24);
+  return `${days}d`;
+}
+
+function scrollToHashTarget(): void {
+  if (!location.hash) return;
+  const target = document.querySelector(location.hash);
+  if (target instanceof HTMLElement) {
+    target.scrollIntoView({ behavior: "instant", block: "start" });
+    target.classList.add("flash");
+    setTimeout(() => target.classList.remove("flash"), 1500);
   }
 }
 

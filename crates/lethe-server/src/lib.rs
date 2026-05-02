@@ -69,7 +69,7 @@ pub fn router(state: AppState) -> Router {
 
     let pages = Router::new()
         .route("/", get(routes::pages::index))
-        .route("/about", get(routes::pages::about))
+        .route("/my-rooms", get(routes::pages::my_rooms))
         .route("/b/:board", get(routes::pages::board))
         .route(
             "/b/:board/t/:thread_id",
@@ -131,6 +131,7 @@ pub fn spawn_retention_worker(db: PgPool, interval: std::time::Duration) {
                 Ok(stats) => tracing::info!(
                     threads_deleted = stats.threads_deleted,
                     room_messages_deleted = stats.room_messages_deleted,
+                    request_nonces_deleted = stats.request_nonces_deleted,
                     "retention sweep",
                 ),
                 Err(e) => tracing::warn!(error = ?e, "retention sweep failed"),

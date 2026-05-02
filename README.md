@@ -94,11 +94,28 @@ sits at the top in a collapsible `<details>`; pick a category from the
 dropdown, write a title and body, and the browser computes the PoW
 before posting. Once posted, the page redirects to the thread.
 
+The welcome / rules / grounding-principles copy lives above the feed
+in a collapsible block — open by default for first-time readers.
+
 The legacy `general` board still exists for back-compat (existing tests
 write to it) but is intentionally hidden from the front-page feed.
 
-The welcome / rules / grounding-principles copy that used to be on the
-landing page now lives at `/about`, linked from the topbar.
+## Rooms
+
+Private rooms are capped at **50 active members**. Removed members
+don't count toward the cap; re-joining as the same box pubkey is
+idempotent. The "My rooms" page (linked from the topbar) lists every
+room this browser has keys for — built entirely from `localStorage`,
+so the server never sees a per-user room list.
+
+## Replay protection
+
+Authenticated room requests (`POST /messages/list`,
+`POST /remove`) carry a Unix timestamp inside the signed payload. The
+server rejects anything outside a ±60 s window AND inserts the
+`(kind, sig_pubkey, ts)` tuple into a `request_nonces` table on accept;
+a duplicate is rejected with 409. Old rows are pruned by the retention
+worker every hour.
 
 ## Removing members and rotating room keys
 

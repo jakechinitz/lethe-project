@@ -10,6 +10,7 @@ use time::Duration;
 pub struct RetentionStats {
     pub threads_deleted: u64,
     pub room_messages_deleted: u64,
+    pub request_nonces_deleted: u64,
 }
 
 pub async fn run_once(db: &PgPool) -> Result<RetentionStats, sqlx::Error> {
@@ -40,6 +41,13 @@ pub async fn run_once(db: &PgPool) -> Result<RetentionStats, sqlx::Error> {
     .execute(db)
     .await?;
     stats.room_messages_deleted = res.rows_affected();
+
+    // Replay-protection nonces older than the freshness window are
+    // useless; the handlers reject any ts beyond ±60 s anyway. We keep
+    // a generous buffer so a tiny clock skew doesn't risk a false "fresh"
+    // for a nonce we already pruned.
+    stats.request_nonces_deleted =
+        super::nonces::prune_older_than(db, time::Duration::seconds(600)).await?;
 
     Ok(stats)
 }

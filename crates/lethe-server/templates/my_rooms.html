@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}My rooms &middot; Lethe{% endblock %}
+{% block main %}
+<h1>My rooms</h1>
+<p class="muted">
+  This list is built entirely from keys stored in this browser. The
+  server does not know which rooms you've joined. Clearing browser data
+  empties this list.
+</p>
+<section id="my-rooms-list" aria-busy="true">
+  <p class="muted">Loading…</p>
+</section>
+<script type="module" src="/static/js/my_rooms.js"></script>
+{% endblock %}
