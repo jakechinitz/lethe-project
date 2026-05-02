@@ -166,6 +166,24 @@ export async function verifyMessageEnvelope(
   return s.crypto_sign_verify_detached(sig, payload, senderSigPub);
 }
 
+/// Signs a canonical message-list request: `b"lethe-list-v1\x00" || room_id || ts_le8`.
+/// Server verifies, checks membership, and gates history to created_at >= joined_at.
+export async function signListRequest(
+  roomId: Uint8Array,
+  unixTs: number,
+  sigPriv: Uint8Array,
+): Promise<Uint8Array> {
+  const s = await sodium();
+  const tsBytes = new Uint8Array(8);
+  let ts = BigInt(unixTs);
+  for (let i = 0; i < 8; i++) {
+    tsBytes[i] = Number(ts & 0xffn);
+    ts >>= 8n;
+  }
+  const payload = concat(utf8("lethe-list-v1\x00"), roomId, tsBytes);
+  return s.crypto_sign_detached(payload, sigPriv);
+}
+
 export async function verifyProvenance(
   originThread: Uint8Array,
   creatorThreadPubkey: Uint8Array,

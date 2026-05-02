@@ -108,6 +108,28 @@ pub struct MessagesResp {
     pub messages: Vec<MessageView>,
 }
 
+/// Authenticated request to list messages. The server gates the response
+/// to messages with `created_at >= requester's joined_at`. The signature
+/// proves membership and the timestamp prevents replays.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ListMessagesReq {
+    pub requester_sig_pubkey: B64,
+    /// Unix timestamp (seconds). Server rejects if more than 60 s skew.
+    pub ts: i64,
+    pub sig: B64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub since: Option<B64>,
+}
+
+/// Canonical bytes signed for an authenticated message list request.
+pub fn canonical_list_request(room_id: &[u8], ts: i64) -> Vec<u8> {
+    let mut buf = Vec::with_capacity(14 + room_id.len() + 8);
+    buf.extend_from_slice(b"lethe-list-v1\x00");
+    buf.extend_from_slice(room_id);
+    buf.extend_from_slice(&ts.to_le_bytes());
+    buf
+}
+
 /// Canonical bytes the room creator signs to attest provenance.
 ///
 /// SLICE LIMITATION: this binds `(origin_thread, creator_thread_pubkey)` only —

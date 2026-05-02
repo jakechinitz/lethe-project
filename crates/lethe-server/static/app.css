@@ -1,116 +1,359 @@
+/*
+ * Monochrome by design: white background, black text, 1px black lines.
+ * No shadows, no rounded corners, no colors. Mobile-first; the same
+ * stylesheet renders cleanly on a phone, the Tor Browser, or a desktop.
+ *
+ * If you find yourself reaching for a color, accent, or radius — push
+ * back. The aesthetic IS the trust signal.
+ */
+
 :root {
-  color-scheme: light dark;
-  --bg: #fafaf7;
-  --fg: #1b1b1b;
-  --muted: #666;
-  --border: #ccc;
-  --accent: #2a4d69;
-  --warn-bg: #fff8e1;
-  --warn-border: #c79a00;
-  --hint: #555;
-  font-family: ui-sans-serif, system-ui, -apple-system, "Helvetica Neue", sans-serif;
+  --fg: #000;
+  --bg: #fff;
+  --muted: #555;
+  --line: #000;
+  --hairline: rgba(0, 0, 0, 0.18);
+  --warn-fill: #fff;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  --sans: ui-sans-serif, system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+  color-scheme: light;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #14151a;
-    --fg: #e8e8e8;
-    --muted: #999;
-    --border: #333;
-    --accent: #8ab4d6;
-    --warn-bg: #2b240a;
-    --warn-border: #b48b00;
-    --hint: #aaa;
-  }
+* {
+  box-sizing: border-box;
 }
 
-* { box-sizing: border-box; }
-body {
+html, body {
   margin: 0;
   padding: 0;
+}
+
+body {
   background: var(--bg);
   color: var(--fg);
+  font-family: var(--sans);
+  font-size: 17px;
   line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
-main { max-width: 720px; margin: 0 auto; padding: 1rem; }
-h1, h2 { line-height: 1.2; }
-a { color: var(--accent); }
+
+/* Layout ------------------------------------------------------------- */
 
 .topbar {
-  display: flex; align-items: baseline; gap: .75rem;
-  padding: .8rem 1rem;
-  border-bottom: 1px solid var(--border);
-}
-.brand { font-weight: 700; font-size: 1.1rem; text-decoration: none; color: var(--fg); }
-.tagline { color: var(--muted); font-size: .85rem; }
-
-.muted { color: var(--muted); }
-.hint { color: var(--hint); font-size: .85rem; }
-.warn, .warn-banner {
-  background: var(--warn-bg);
-  border: 1px solid var(--warn-border);
-  border-radius: 6px;
-  padding: .8rem 1rem;
-  margin: 1rem 0;
-  font-size: .95rem;
+  display: flex;
+  align-items: baseline;
+  gap: .9rem;
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid var(--line);
 }
 
-form { display: flex; flex-direction: column; gap: .5rem; margin: 1rem 0; }
-form label { display: flex; flex-direction: column; gap: .25rem; }
-input, textarea {
-  font: inherit;
-  padding: .5rem;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: transparent;
+.brand {
+  font-weight: 700;
+  font-size: 1.1rem;
+  letter-spacing: .02em;
+  text-decoration: none;
   color: var(--fg);
 }
-textarea { resize: vertical; }
+
+.tagline {
+  color: var(--muted);
+  font-size: .82rem;
+}
+
+main {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 1.25rem 1.25rem 4rem;
+}
+
+footer {
+  border-top: 1px solid var(--hairline);
+  padding: 1.25rem;
+  text-align: center;
+  color: var(--muted);
+  font-size: .82rem;
+}
+
+/* Headings ----------------------------------------------------------- */
+
+h1, h2, h3 {
+  font-weight: 600;
+  line-height: 1.2;
+  margin: 1.6rem 0 .8rem;
+}
+
+h1 { font-size: 1.5rem; }
+h2 { font-size: 1.1rem; text-transform: uppercase; letter-spacing: .08em; color: var(--fg); padding-bottom: .35rem; border-bottom: 1px solid var(--line); }
+h3 { font-size: 1rem; }
+
+a {
+  color: var(--fg);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+a:hover { text-decoration-thickness: 2px; }
+
+p { margin: .6rem 0; }
+.muted { color: var(--muted); }
+.crumbs { color: var(--muted); font-size: .9rem; margin-bottom: 0; }
+
+/* Hero --------------------------------------------------------------- */
+
+.hero h1 {
+  font-size: 1.9rem;
+  margin-top: .25rem;
+}
+
+.cta {
+  display: inline-block;
+  padding: .65rem 1.1rem;
+  border: 1px solid var(--line);
+  text-decoration: none;
+  margin-top: .25rem;
+}
+.cta:hover {
+  background: var(--fg);
+  color: var(--bg);
+}
+
+/* Forms -------------------------------------------------------------- */
+
+form {
+  display: flex;
+  flex-direction: column;
+  gap: .65rem;
+  margin: 1.1rem 0;
+}
+
+label {
+  display: flex;
+  flex-direction: column;
+  gap: .25rem;
+  font-size: .92rem;
+}
+
+input[type="text"],
+input:not([type]),
+textarea {
+  font: inherit;
+  font-size: 1rem;
+  padding: .65rem .75rem;
+  border: 1px solid var(--line);
+  border-radius: 0;
+  background: var(--bg);
+  color: var(--fg);
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+}
+textarea { resize: vertical; min-height: 5.5rem; }
+
+input:focus,
+textarea:focus {
+  outline: 2px solid var(--fg);
+  outline-offset: -1px;
+}
+
 button {
-  align-self: flex-start;
-  padding: .5rem .9rem;
-  border: 1px solid var(--accent);
-  background: transparent;
-  color: var(--accent);
-  border-radius: 4px;
+  font: inherit;
+  font-size: 1rem;
+  padding: .7rem 1.1rem;
+  min-height: 44px; /* touch-friendly */
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--fg);
+  border-radius: 0;
   cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+  align-self: flex-start;
 }
-button:hover { background: var(--accent); color: var(--bg); }
+button:hover:not(:disabled) {
+  background: var(--fg);
+  color: var(--bg);
+}
+button:disabled {
+  opacity: .55;
+  cursor: not-allowed;
+}
 
-.thread-list ul { list-style: none; padding: 0; }
-.thread-list li { padding: .35rem 0; border-bottom: 1px solid var(--border); }
+input[type="checkbox"] {
+  width: 1.05rem;
+  height: 1.05rem;
+  margin-right: .35rem;
+  accent-color: #000;
+}
 
+.identity-toggle label {
+  flex-direction: row;
+  align-items: center;
+  font-size: 1rem;
+}
+.hint {
+  color: var(--muted);
+  font-size: .85rem;
+  margin: .2rem 0 0;
+}
+.status {
+  color: var(--muted);
+  font-size: .9rem;
+  min-height: 1.2em;
+  margin: .25rem 0 0;
+}
+
+/* Lists -------------------------------------------------------------- */
+
+.thread-list ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  border-top: 1px solid var(--line);
+}
+.thread-list li {
+  padding: .9rem .25rem;
+  border-bottom: 1px solid var(--hairline);
+}
+.thread-list a { text-decoration: none; }
+.thread-list a:hover { text-decoration: underline; }
+
+/* Posts -------------------------------------------------------------- */
+
+.posts {
+  border-top: 1px solid var(--line);
+}
 .posts .post {
-  padding: .8rem 0;
-  border-bottom: 1px solid var(--border);
+  padding: 1rem 0;
+  border-bottom: 1px solid var(--hairline);
 }
-.posts .post .meta { font-size: .85rem; color: var(--muted); margin-bottom: .35rem; }
-.posts .post .body { white-space: pre-wrap; }
+.posts .post .meta {
+  font-family: var(--mono);
+  font-size: .82rem;
+  color: var(--muted);
+  margin-bottom: .35rem;
+}
+.posts .post .body {
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
 
-.identity-toggle { padding: .5rem 0; }
-.crumbs { color: var(--muted); }
+/* Banners ------------------------------------------------------------ */
+
+.warn,
+.warn-banner {
+  border: 1px solid var(--line);
+  background: var(--warn-fill);
+  padding: .9rem 1rem;
+  margin: 1rem 0;
+  font-size: .92rem;
+}
+.warn-banner strong { font-weight: 700; }
+
+/* Members + trust card ---------------------------------------------- */
+
+.members #members-list {
+  display: flex;
+  flex-direction: column;
+  gap: .55rem;
+}
 
 .member {
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: .6rem .8rem;
-  margin: .4rem 0;
-  font-size: .9rem;
+  border: 1px solid var(--line);
+  padding: .7rem .85rem;
+  font-size: .92rem;
+  display: flex;
+  flex-direction: column;
+  gap: .35rem;
 }
-.member.flagged { border-color: var(--warn-border); background: var(--warn-bg); }
-.member .badges { display: inline-flex; gap: .35rem; flex-wrap: wrap; }
-.member .badge {
+.member.flagged {
+  border-width: 2px;
+}
+.member > div:first-child {
+  font-family: var(--mono);
+  font-size: .85rem;
+  color: var(--fg);
+}
+.badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .3rem;
+}
+.badge {
   display: inline-block;
-  padding: .1rem .45rem;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  font-size: .75rem;
+  padding: .12rem .5rem;
+  border: 1px solid var(--line);
+  font-size: .72rem;
+  font-family: var(--mono);
+  letter-spacing: .03em;
 }
 
-.messages .msg { padding: .35rem 0; border-bottom: 1px dashed var(--border); }
-.messages .msg .from { font-size: .8rem; color: var(--muted); }
-.messages .msg .body { white-space: pre-wrap; }
+/* Messages ----------------------------------------------------------- */
 
-footer { padding: 1rem; text-align: center; color: var(--muted); font-size: .85rem; }
-.cta { display: inline-block; padding: .4rem .8rem; border: 1px solid var(--accent); border-radius: 4px; text-decoration: none; }
-.status { color: var(--muted); font-size: .9rem; }
+.messages #messages-list {
+  border-top: 1px solid var(--line);
+}
+.messages .msg {
+  padding: .7rem 0;
+  border-bottom: 1px solid var(--hairline);
+}
+.messages .msg .from {
+  font-family: var(--mono);
+  font-size: .78rem;
+  color: var(--muted);
+}
+.messages .msg .body {
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+.provenance {
+  border: 1px solid var(--line);
+  padding: .8rem 1rem;
+  margin: 1rem 0;
+  font-size: .92rem;
+}
+.provenance #provenance-text {
+  margin: 0;
+}
+
+.room-cta {
+  margin: 1.5rem 0 .5rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--hairline);
+}
+.room-cta a {
+  display: inline-block;
+  padding: .6rem .9rem;
+  border: 1px solid var(--line);
+  text-decoration: none;
+}
+.room-cta a:hover {
+  background: var(--fg);
+  color: var(--bg);
+}
+
+/* Code / invite link ------------------------------------------------- */
+
+code {
+  font-family: var(--mono);
+  font-size: .9rem;
+  word-break: break-all;
+}
+#invite-link {
+  display: inline-block;
+  padding: .55rem .7rem;
+  border: 1px solid var(--line);
+}
+
+/* Mobile tightening -------------------------------------------------- */
+
+@media (max-width: 480px) {
+  body { font-size: 16px; }
+  main { padding: 1rem 1rem 3rem; }
+  h1 { font-size: 1.35rem; }
+  .hero h1 { font-size: 1.6rem; }
+  .topbar { padding: .85rem 1rem; }
+  button { width: 100%; align-self: stretch; }
+  .cta { display: block; text-align: center; }
+}

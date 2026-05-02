@@ -174,6 +174,20 @@ pub fn decrypt_message(
         .expect("decrypt")
 }
 
+pub fn sign_list_request(
+    room_id: &[u8],
+    ts: i64,
+    sk: &SigningSecretKey,
+) -> Signature {
+    let mut payload = Vec::with_capacity(14 + room_id.len() + 8);
+    payload.extend_from_slice(b"lethe-list-v1\x00");
+    payload.extend_from_slice(room_id);
+    payload.extend_from_slice(&ts.to_le_bytes());
+    let mut sig: Signature = [0u8; 64];
+    crypto_sign_detached(&mut sig, &payload, sk).expect("sign");
+    sig
+}
+
 pub fn sign_message_envelope(
     room_id: &[u8],
     nonce: &[u8],

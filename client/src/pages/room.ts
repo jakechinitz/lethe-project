@@ -186,9 +186,16 @@ async function tickMessages(keys: roomkey.RoomKeys): Promise<void> {
   if (!keys.roomKey) return;
   const fresh = roomkey.read(roomIdB64);
   if (!fresh?.roomKey) return;
+  const ts = Math.floor(Date.now() / 1000);
+  const sig = await roomkey.signListRequest(roomIdBytes, ts, fresh.sigPriv);
   let resp: { messages: MessageView[] };
   try {
-    resp = await api.listMessages(roomIdB64, lastMessageId);
+    resp = await api.listMessages(roomIdB64, {
+      requester_sig_pubkey: b64encode(fresh.sigPub),
+      ts,
+      sig: b64encode(sig),
+      since: lastMessageId,
+    });
   } catch {
     return;
   }

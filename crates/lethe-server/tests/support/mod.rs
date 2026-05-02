@@ -41,7 +41,9 @@ pub async fn spawn() -> TestServer {
         bind_addr: "127.0.0.1:0".parse().unwrap(),
         default_pow_bits: pow_bits as u8,
     };
-    let pool = db::connect(&cfg.database_url).await.expect("db connect");
+    let pool = db::connect_with_pool_size(&cfg.database_url, 2)
+        .await
+        .expect("db connect");
     let state = AppState { db: pool.clone(), cfg };
     let app = router(state);
 
@@ -62,6 +64,7 @@ pub async fn spawn() -> TestServer {
 async fn create_db(name: &str) {
     let admin: PgPool = sqlx::postgres::PgPoolOptions::new()
         .max_connections(1)
+        .acquire_timeout(std::time::Duration::from_secs(60))
         .connect(ADMIN_DATABASE_URL)
         .await
         .expect("admin connect");
@@ -69,4 +72,7 @@ async fn create_db(name: &str) {
         .execute(&admin)
         .await
         .expect("create db");
+    // Close eagerly so we don't sit on the connection while many tests
+    // share a single Postgres instance.
+    admin.close().await;
 }

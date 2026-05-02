@@ -165,6 +165,24 @@ pub async fn is_member(
     Ok(row.is_some())
 }
 
+/// Returns the joined_at timestamp of a member identified by their sig
+/// pubkey. `None` if not a member of this room.
+pub async fn joined_at_for_sig_member(
+    db: &PgPool,
+    room_id: &[u8],
+    sig_pubkey: &[u8],
+) -> Result<Option<OffsetDateTime>, sqlx::Error> {
+    let row: Option<(OffsetDateTime,)> = sqlx::query_as(
+        "SELECT joined_at FROM room_members
+         WHERE room_id = $1 AND member_sig_pubkey = $2",
+    )
+    .bind(room_id)
+    .bind(sig_pubkey)
+    .fetch_optional(db)
+    .await?;
+    Ok(row.map(|r| r.0))
+}
+
 pub async fn is_member_by_box(
     db: &PgPool,
     room_id: &[u8],
@@ -251,9 +269,13 @@ struct MessageRow {
     created_at: OffsetDateTime,
 }
 
-pub async fn list_messages(
+/// Lists messages visible to a member, applying the history gate
+/// (`created_at >= joined_at`). The caller must have already verified the
+/// requester is a member of this room.
+pub async fn list_messages_for_member(
     db: &PgPool,
     room_id: &[u8],
+    member_joined_at: OffsetDateTime,
     since: Option<&[u8]>,
     limit: i64,
 ) -> Result<Vec<MessageView>, sqlx::Error> {
@@ -261,10 +283,11 @@ pub async fn list_messages(
         Some(s) => sqlx::query_as(
             "SELECT id, sender_sig_pubkey, nonce, ciphertext, sender_sig, created_at
              FROM room_messages
-             WHERE room_id = $1 AND id > $2
-             ORDER BY id ASC LIMIT $3",
+             WHERE room_id = $1 AND created_at >= $2 AND id > $3
+             ORDER BY id ASC LIMIT $4",
         )
         .bind(room_id)
+        .bind(member_joined_at)
         .bind(s)
         .bind(limit)
         .fetch_all(db)
@@ -272,10 +295,11 @@ pub async fn list_messages(
         None => sqlx::query_as(
             "SELECT id, sender_sig_pubkey, nonce, ciphertext, sender_sig, created_at
              FROM room_messages
-             WHERE room_id = $1
-             ORDER BY id ASC LIMIT $2",
+             WHERE room_id = $1 AND created_at >= $2
+             ORDER BY id ASC LIMIT $3",
         )
         .bind(room_id)
+        .bind(member_joined_at)
         .bind(limit)
         .fetch_all(db)
         .await?,

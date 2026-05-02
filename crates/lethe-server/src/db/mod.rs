@@ -11,8 +11,15 @@ pub mod rooms;
 pub mod threads;
 
 pub async fn connect(database_url: &str) -> Result<PgPool, sqlx::Error> {
+    connect_with_pool_size(database_url, 8).await
+}
+
+pub async fn connect_with_pool_size(
+    database_url: &str,
+    max_connections: u32,
+) -> Result<PgPool, sqlx::Error> {
     let pool = sqlx::postgres::PgPoolOptions::new()
-        .max_connections(8)
+        .max_connections(max_connections)
         .connect(database_url)
         .await?;
     sqlx::migrate!("./migrations").run(&pool).await?;

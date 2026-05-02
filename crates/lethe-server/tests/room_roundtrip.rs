@@ -164,8 +164,17 @@ async fn room_e2ee_roundtrip_with_provenance() {
         .unwrap();
     assert!(send_resp.status().is_success());
 
+    // Bob lists messages with an authenticated request — the server gates
+    // by his joined_at, but he joined before Alice's send, so he sees it.
+    let ts = time::OffsetDateTime::now_utc().unix_timestamp();
+    let bob_list_sig = browser::sign_list_request(&room_id_bytes, ts, &bob.sig_priv);
     let listed: MessagesResp = client
-        .get(format!("{}/api/rooms/{}/messages", s.base_url, create_resp.room_id))
+        .post(format!("{}/api/rooms/{}/messages/list", s.base_url, create_resp.room_id))
+        .json(&json!({
+            "requester_sig_pubkey": browser::b64(&bob.sig_pub),
+            "ts": ts,
+            "sig": browser::b64(&bob_list_sig),
+        }))
         .send()
         .await
         .unwrap()

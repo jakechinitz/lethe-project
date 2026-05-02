@@ -3,12 +3,11 @@
 
 use crate::{error::AppResult, logic, state::AppState};
 use axum::{
-    extract::{Path, Query, State},
+    extract::{Path, State},
     http::StatusCode,
     Json,
 };
 use lethe_types::rooms::*;
-use serde::Deserialize;
 
 pub async fn create(
     State(state): State<AppState>,
@@ -56,17 +55,12 @@ pub async fn send_message(
     Ok(Json(logic::rooms::send_message(&state.db, &room_id, req).await?))
 }
 
-#[derive(Deserialize)]
-pub struct ListMessagesQuery {
-    pub since: Option<String>,
-}
-
 pub async fn list_messages(
     State(state): State<AppState>,
     Path(room_id): Path<String>,
-    Query(q): Query<ListMessagesQuery>,
+    Json(req): Json<ListMessagesReq>,
 ) -> AppResult<Json<MessagesResp>> {
     Ok(Json(
-        logic::rooms::list_messages(&state.db, &room_id, q.since.as_deref()).await?,
+        logic::rooms::list_messages_authed(&state.db, &room_id, req).await?,
     ))
 }

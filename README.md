@@ -84,10 +84,38 @@ through the server, and asserts no plaintext was stored anywhere.
 
 ## Tor / onion deployment
 
-The server binds to `127.0.0.1:8080` by default. To expose it as a Tor
-hidden service, point a `HiddenServicePort 80 127.0.0.1:8080` at it in
-your `torrc`. No application changes are required; do not run any other
-reverse proxy or CDN in front of it.
+The server binds to `127.0.0.1:8080` by default and serves no third-party
+assets, so it works as a Tor hidden service with no application changes.
+
+Add to `/etc/tor/torrc`:
+
+```
+HiddenServiceDir /var/lib/tor/lethe/
+HiddenServicePort 80 127.0.0.1:8080
+```
+
+Then `systemctl restart tor` and read the `.onion` address from
+`/var/lib/tor/lethe/hostname`. Do not put a reverse proxy or CDN in
+front of the service — the whole point is that the operator runs as
+little extra software as possible.
+
+### Tor Browser security levels
+
+| Level    | Works | Notes |
+|----------|-------|-------|
+| Standard | yes   | Full functionality (PoW, signing, encryption). |
+| Safer    | yes   | JIT off; PoW is slower but still completes. |
+| Safest   | no    | Disables JavaScript globally — there is nothing the app can do about this; it breaks PoW, signing, and the entire E2EE flow. The page still renders read-only public threads since those are server-rendered HTML, but posting and rooms are unavailable. |
+
+## Mobile
+
+The UI is designed mobile-first with a single-column layout that works
+on a phone in portrait. There is no native app; use the system browser
+or, on Tor, **Onion Browser** (iOS) or **Tor Browser for Android**. Both
+default to the Standard security level, which is what we test against.
+
+Tap targets are at least 44 px high and forms scale to full width below
+480 px wide.
 
 ## What this slice deliberately does NOT promise
 

@@ -51,12 +51,10 @@ export const api = {
       `/api/rooms/${roomId}/messages`,
       { method: "POST", body },
     ),
-  listMessages: (roomId: string, since?: string) =>
+  listMessages: (roomId: string, body: unknown) =>
     call<{ messages: Array<MessageView> }>(
-      since
-        ? `/api/rooms/${roomId}/messages?since=${encodeURIComponent(since)}`
-        : `/api/rooms/${roomId}/messages`,
-      { method: "GET" },
+      `/api/rooms/${roomId}/messages/list`,
+      { method: "POST", body },
     ),
 };
 

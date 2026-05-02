@@ -192,21 +192,51 @@ pub async fn send_message(
     })
 }
 
-pub async fn list_messages(
+/// Authenticated, history-gated listing.
+///
+/// Trust gate: the request is signed by `requester_sig_pubkey` over a
+/// canonical payload that includes the `room_id` and a fresh timestamp.
+/// Server verifies the signature, checks membership, and filters messages
+/// to those at-or-after the requester's `joined_at`. This prevents a new
+/// member from reading messages that predated their join.
+pub async fn list_messages_authed(
     db: &PgPool,
     room_id_b64: &str,
-    since: Option<&str>,
+    req: ListMessagesReq,
 ) -> AppResult<MessagesResp> {
     let room_id = ids::unb64(room_id_b64).map_err(|_| AppError::BadRequest("room_id b64"))?;
     if db::rooms::meta_by_id(db, &room_id).await?.is_none() {
         return Err(AppError::NotFound);
     }
-    let since_bytes = match since {
+
+    let requester_pk = decode_pubkey(&req.requester_sig_pubkey, "requester_sig_pubkey")?;
+    let sig = ids::unb64(&req.sig).map_err(|_| AppError::BadRequest("sig b64"))?;
+    if sig.len() != SIG_LEN {
+        return Err(AppError::BadRequest("sig length"));
+    }
+    let now = time::OffsetDateTime::now_utc().unix_timestamp();
+    if (now - req.ts).abs() > 60 {
+        return Err(AppError::BadRequest("ts outside ±60s window"));
+    }
+    crypto::verify_list_request(&requester_pk, &sig, &room_id, req.ts)?;
+
+    let joined_at = db::rooms::joined_at_for_sig_member(db, &room_id, &requester_pk)
+        .await?
+        .ok_or(AppError::Forbidden("requester is not a member"))?;
+
+    let since_bytes = match &req.since {
         Some(s) => Some(ids::unb64(s).map_err(|_| AppError::BadRequest("since b64"))?),
         None => None,
     };
     Ok(MessagesResp {
-        messages: db::rooms::list_messages(db, &room_id, since_bytes.as_deref(), 500).await?,
+        messages: db::rooms::list_messages_for_member(
+            db,
+            &room_id,
+            joined_at,
+            since_bytes.as_deref(),
+            500,
+        )
+        .await?,
     })
 }
 

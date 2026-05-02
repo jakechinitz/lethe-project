@@ -50,9 +50,10 @@ pub fn router(state: AppState) -> Router {
         .route("/rooms/:room_id/wrap", post(routes::rooms::wrap))
         .route("/rooms/:room_id/members", get(routes::rooms::members))
         .route("/rooms/:room_id/provenance", get(routes::rooms::provenance))
+        .route("/rooms/:room_id/messages", post(routes::rooms::send_message))
         .route(
-            "/rooms/:room_id/messages",
-            post(routes::rooms::send_message).get(routes::rooms::list_messages),
+            "/rooms/:room_id/messages/list",
+            post(routes::rooms::list_messages),
         );
 
     let pages = Router::new()

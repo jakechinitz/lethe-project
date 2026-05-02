@@ -38,6 +38,17 @@ pub fn verify_room_provenance(
     verify_ed25519(creator_thread_pubkey, provenance_sig, &payload)
 }
 
+/// Verifies the signature on an authenticated message-list request.
+pub fn verify_list_request(
+    requester_sig_pubkey: &[u8],
+    sig: &[u8],
+    room_id: &[u8],
+    ts: i64,
+) -> Result<(), CryptoError> {
+    let payload = rooms::canonical_list_request(room_id, ts);
+    verify_ed25519(requester_sig_pubkey, sig, &payload)
+}
+
 /// Verifies that a room message was signed by the claimed sender pubkey.
 pub fn verify_room_message_sender(
     sender_sig_pubkey: &[u8],
