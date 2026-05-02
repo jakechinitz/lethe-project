@@ -7,6 +7,7 @@
 use sqlx::PgPool;
 
 pub mod posts;
+pub mod retention;
 pub mod rooms;
 pub mod threads;
 

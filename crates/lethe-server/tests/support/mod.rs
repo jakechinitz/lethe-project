@@ -41,7 +41,10 @@ pub async fn spawn() -> TestServer {
         bind_addr: "127.0.0.1:0".parse().unwrap(),
         default_pow_bits: pow_bits as u8,
     };
-    let pool = db::connect_with_pool_size(&cfg.database_url, 2)
+    // Tests are short-lived and largely sequential within a single test
+    // case; one connection per server is enough and keeps the total
+    // postgres connection count manageable when many tests run in parallel.
+    let pool = db::connect_with_pool_size(&cfg.database_url, 1)
         .await
         .expect("db connect");
     let state = AppState { db: pool.clone(), cfg };

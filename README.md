@@ -82,6 +82,65 @@ The headline test is `tests/room_roundtrip.rs::room_e2ee_roundtrip_with_provenan
 which drives two clients through the API, decrypts a message round-tripped
 through the server, and asserts no plaintext was stored anywhere.
 
+## Storage and retention
+
+Public posts and private-room ciphertext both live in Postgres. Server
+storage is automatic — every successful POST persists. The server has
+no way to read room messages: each row stores opaque ciphertext, the
+24-byte XChaCha20-Poly1305 nonce, and the sender's Ed25519 signature.
+
+A background **retention worker** runs every hour and deletes:
+
+- threads whose `created_at` exceeds the board's `retention_days`
+  (default 30 days)
+- room messages whose `created_at` exceeds the room's
+  `message_retention_days` (default 7 days)
+
+These columns are configurable per-board / per-room — operators pick
+their own ceiling. The defaults are deliberately short so the server
+holds as little as possible. There are no automated backups; if you
+want them, point a sidecar at `pg_dump` with off-box encrypted storage.
+
+There is no automatic data export and no user-facing "delete my
+posts" — the retention sweep is the only deletion path.
+
+## systemd
+
+Minimal unit (`/etc/systemd/system/lethe.service`):
+
+```
+[Unit]
+Description=Lethe
+After=network.target postgresql.service
+
+[Service]
+Type=simple
+User=lethe
+EnvironmentFile=/etc/lethe.env
+WorkingDirectory=/srv/lethe
+ExecStart=/srv/lethe/lethe-server
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ReadWritePaths=
+
+[Install]
+WantedBy=multi-user.target
+```
+
+`/etc/lethe.env` holds `DATABASE_URL`, `BIND_ADDR=127.0.0.1:8080`, and
+`RUST_LOG=lethe_server=info`. Logs land in `journalctl -u lethe`.
+
+## Health check
+
+`GET /healthz` returns `200 OK` with no body. Use it from your supervisor
+or external monitor — it does not touch the database, log the request,
+or expose anything else.
+
 ## Tor / onion deployment
 
 The server binds to `127.0.0.1:8080` by default and serves no third-party
