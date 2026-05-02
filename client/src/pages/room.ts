@@ -116,6 +116,20 @@ async function tickMembers(): Promise<void> {
 }
 
 function renderMembers(members: MemberView[]): void {
+  const counts = members.reduce(
+    (acc, m) => {
+      if (m.removed_at) acc.removed += 1; else acc.active += 1;
+      return acc;
+    },
+    { active: 0, removed: 0 },
+  );
+  const countEl = document.querySelector<HTMLElement>("#member-count");
+  if (countEl) {
+    countEl.textContent =
+      counts.removed === 0
+        ? `(${counts.active} active)`
+        : `(${counts.active} active · ${counts.removed} removed)`;
+  }
   clear(membersList);
   for (const m of members) {
     const removed = !!m.removed_at;

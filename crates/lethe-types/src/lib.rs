@@ -11,6 +11,7 @@
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 
+pub mod feed;
 pub mod posts;
 pub mod rooms;
 

@@ -46,6 +46,7 @@ async fn healthz() -> StatusCode {
 pub fn router(state: AppState) -> Router {
     let api = Router::new()
         .route("/boards/:id", get(routes::boards::get))
+        .route("/feed", get(routes::feed::get))
         .route("/threads", post(routes::threads::create))
         .route(
             "/threads/:thread_id/posts",
@@ -68,6 +69,7 @@ pub fn router(state: AppState) -> Router {
 
     let pages = Router::new()
         .route("/", get(routes::pages::index))
+        .route("/about", get(routes::pages::about))
         .route("/b/:board", get(routes::pages::board))
         .route(
             "/b/:board/t/:thread_id",
@@ -75,7 +77,8 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/r/new", get(routes::pages::room_create))
         .route("/r/join/:invite_code", get(routes::pages::room_join))
-        .route("/r/:room_id", get(routes::pages::room));
+        .route("/r/:room_id", get(routes::pages::room))
+        .fallback(get(routes::pages::not_found));
 
     let static_dir = std::env::var("LETHE_STATIC_DIR")
         .unwrap_or_else(|_| "crates/lethe-server/static".to_string());

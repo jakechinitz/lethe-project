@@ -82,6 +82,24 @@ The headline test is `tests/room_roundtrip.rs::room_e2ee_roundtrip_with_provenan
 which drives two clients through the API, decrypts a message round-tripped
 through the server, and asserts no plaintext was stored anywhere.
 
+## Front-page feed
+
+The home page (`/`) is a flat thread feed across four categories:
+**Government**, **Economy**, **Science & Tech**, **All other**. Tabs at
+the top filter to one category; the default merges all four. A "Sort"
+toggle picks between **Last comment** (active threads first) and
+**Newest** (most-recently created first). The feed is cursor-paginated
+and infinite-scrolls via `IntersectionObserver`. The new-thread form
+sits at the top in a collapsible `<details>`; pick a category from the
+dropdown, write a title and body, and the browser computes the PoW
+before posting. Once posted, the page redirects to the thread.
+
+The legacy `general` board still exists for back-compat (existing tests
+write to it) but is intentionally hidden from the front-page feed.
+
+The welcome / rules / grounding-principles copy that used to be on the
+landing page now lives at `/about`, linked from the topbar.
+
 ## Removing members and rotating room keys
 
 The room creator (the only member with no inviter) can remove any other

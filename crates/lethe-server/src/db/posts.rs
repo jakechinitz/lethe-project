@@ -19,10 +19,13 @@ pub struct Inserted {
     pub seq: i32,
 }
 
-/// Inserts a post and returns its assigned sequence number. The seq is
-/// computed inside a single statement to avoid races.
+/// Inserts a post, bumps the parent thread's activity counters, and
+/// returns the assigned sequence number. Both writes happen in one
+/// transaction so the feed's `last_post_at` index never observes a stale
+/// state where a post exists but the thread hasn't been updated yet.
 pub async fn insert(db: &PgPool, p: NewPost<'_>) -> Result<Inserted, sqlx::Error> {
     let post_id = ids::new_ulid();
+    let mut tx = db.begin().await?;
     let row: (i32,) = sqlx::query_as(
         "INSERT INTO posts (id, thread_id, seq, body, pow_nonce, pubkey, signature, created_at)
          VALUES (
@@ -39,8 +42,19 @@ pub async fn insert(db: &PgPool, p: NewPost<'_>) -> Result<Inserted, sqlx::Error
     .bind(p.pubkey)
     .bind(p.signature)
     .bind(p.created_at)
-    .fetch_one(db)
+    .fetch_one(&mut *tx)
     .await?;
+    sqlx::query(
+        "UPDATE threads
+         SET last_post_at = GREATEST(last_post_at, $2),
+             post_count = post_count + 1
+         WHERE id = $1",
+    )
+    .bind(p.thread_id)
+    .bind(p.created_at)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
     Ok(Inserted { post_id, seq: row.0 })
 }
 

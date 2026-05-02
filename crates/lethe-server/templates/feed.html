@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}Lethe{% endblock %}
+{% block head %}
+<meta name="lethe-selected-cat" content="{{ selected_category }}">
+<meta name="lethe-selected-sort" content="{{ selected_sort }}">
+<meta name="lethe-pow-bits" content="{{ pow_bits }}">
+{% endblock %}
+{% block main %}
+<nav class="tabs" aria-label="Categories">
+  <a href="/{% if selected_sort == "newest" %}?sort=newest{% endif %}"
+     class="tab{% if selected_category == "" %} active{% endif %}">All</a>
+  {% for c in categories %}
+    <a href="/?cat={{ c.slug }}{% if selected_sort == "newest" %}&sort=newest{% endif %}"
+       class="tab{% if selected_category == c.slug %} active{% endif %}">
+      {{ c.label }}
+    </a>
+  {% endfor %}
+</nav>
+
+<div class="sort-row">
+  <span class="muted">Sort:</span>
+  <a href="?{% if selected_category != "" %}cat={{ selected_category }}&{% endif %}sort=last_comment"
+     class="sort{% if selected_sort == "last_comment" %} active{% endif %}">Last comment</a>
+  <a href="?{% if selected_category != "" %}cat={{ selected_category }}&{% endif %}sort=newest"
+     class="sort{% if selected_sort == "newest" %} active{% endif %}">Newest</a>
+</div>
+
+<section class="new-post">
+  <details>
+    <summary>Submit a new post</summary>
+    <form id="new-thread-form">
+      <label>
+        Title
+        <input name="title" maxlength="256" required>
+      </label>
+      <label>
+        Category
+        <select name="board_id" required>
+          {% for c in categories %}
+            <option value="{{ c.slug }}"{% if selected_category == c.slug %} selected{% endif %}>{{ c.label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>
+        Body
+        <textarea name="body" rows="5" maxlength="16384" required></textarea>
+      </label>
+      <button type="submit">Post (computes proof-of-work)</button>
+      <p class="status" id="new-thread-status"></p>
+    </form>
+  </details>
+</section>
+
+<section class="feed" id="feed" aria-busy="true">
+  <p class="muted">Loading…</p>
+</section>
+<p class="feed-end muted" id="feed-end" hidden>You've reached the end.</p>
+
+<script type="module" src="/static/js/feed.js"></script>
+{% endblock %}

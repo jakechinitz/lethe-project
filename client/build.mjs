@@ -33,7 +33,7 @@ const common = {
   plugins: [libsodiumPlugin],
 };
 
-const pages = ["board", "thread", "room_create", "room_join", "room"];
+const pages = ["feed", "board", "thread", "room_create", "room_join", "room"];
 
 await build({
   ...common,

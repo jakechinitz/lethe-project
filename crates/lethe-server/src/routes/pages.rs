@@ -122,9 +122,66 @@ pub async fn room(Path(room_id_b64): Path<String>) -> AppResult<Response> {
 }
 
 #[derive(Template)]
-#[template(path = "index.html")]
-struct IndexPage {}
+#[template(path = "feed.html")]
+struct FeedPage {
+    categories: Vec<CategoryEntry>,
+    /// Empty string means "all". Templates stay simple by avoiding `Option`.
+    selected_category: String,
+    selected_sort: String,
+    pow_bits: u8,
+}
 
-pub async fn index() -> AppResult<Response> {
-    Ok(IndexPage {}.into_response())
+struct CategoryEntry {
+    slug: String,
+    label: &'static str,
+}
+
+#[derive(serde::Deserialize)]
+pub struct FeedPageQuery {
+    pub cat: Option<String>,
+    pub sort: Option<String>,
+}
+
+pub async fn index(
+    State(state): State<AppState>,
+    Query(q): Query<FeedPageQuery>,
+) -> AppResult<Response> {
+    let categories = vec![
+        CategoryEntry { slug: "government".into(),   label: "Government" },
+        CategoryEntry { slug: "economy".into(),      label: "Economy" },
+        CategoryEntry { slug: "science_tech".into(), label: "Science & Tech" },
+        CategoryEntry { slug: "all_other".into(),    label: "All other" },
+    ];
+    let selected_category = q
+        .cat
+        .filter(|c| categories.iter().any(|e| &e.slug == c))
+        .unwrap_or_default();
+    let selected_sort = match q.sort.as_deref() {
+        Some("newest") => "newest".to_string(),
+        _ => "last_comment".to_string(),
+    };
+    Ok(FeedPage {
+        categories,
+        selected_category,
+        selected_sort,
+        pow_bits: state.cfg.default_pow_bits,
+    }
+    .into_response())
+}
+
+#[derive(Template)]
+#[template(path = "about.html")]
+struct AboutPage {}
+
+pub async fn about() -> AppResult<Response> {
+    Ok(AboutPage {}.into_response())
+}
+
+#[derive(Template)]
+#[template(path = "404.html")]
+struct NotFoundPage {}
+
+pub async fn not_found() -> Response {
+    use axum::http::StatusCode;
+    (StatusCode::NOT_FOUND, NotFoundPage {}).into_response()
 }

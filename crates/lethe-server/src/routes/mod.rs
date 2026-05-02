@@ -2,6 +2,7 @@
 //! `logic::*` → shape the response.
 
 pub mod boards;
+pub mod feed;
 pub mod pages;
 pub mod posts;
 pub mod rooms;
