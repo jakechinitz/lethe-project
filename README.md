@@ -1,7 +1,7 @@
 # Lethe
 
 A Tor-native, anonymous public-to-private coordination platform. Public
-boards are 4chan-style anonymous threads. Private rooms are end-to-end
+boards are anonymous threads. Private rooms are end-to-end
 encrypted text chat. There are no accounts, no global profiles, and the
 server is treated as untrusted: it stores ciphertext only for private
 rooms and never sees user plaintext or any unwrapped key.
