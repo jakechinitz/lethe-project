@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}My rooms &middot; Lethe{% endblock %}
+{% block main %}
+<h1>My rooms</h1>
+<p class="muted">
+  This list is built entirely from keys stored in this browser. The
+  server does not know which rooms you've joined. Clearing browser data
+  empties this list.
+</p>
+
+<section class="keyfile-actions">
+  <h2>Backup &amp; restore</h2>
+  <p class="muted">
+    Tor Browser's "New Identity" and the Safer security level wipe site
+    storage. Save an encrypted keyfile so you can restore your thread
+    and room identities later.
+  </p>
+  <div class="keyfile-buttons">
+    <button type="button" id="export-btn">Export keyfile</button>
+    <label class="import-label" for="import-input">
+      <span class="import-button">Import keyfile</span>
+      <input type="file" id="import-input" accept=".lethe,application/octet-stream" hidden>
+    </label>
+  </div>
+  <p class="status" id="keyfile-status"></p>
+</section>
+
+<section id="my-rooms-list" aria-busy="true">
+  <p class="muted">Loading…</p>
+</section>
+<script type="module" src="/static/js/my_rooms.js"></script>
+{% endblock %}
+

@@ -1,0 +1,17 @@
+{
+  "name": "lethe-client",
+  "version": "0.1.0",
+  "private": true,
+  "license": "AGPL-3.0-or-later",
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "esbuild": "^0.24.0",
+    "libsodium-wrappers-sumo": "^0.7.13",
+    "@types/libsodium-wrappers-sumo": "^0.7.8",
+    "typescript": "^5.5.0"
+  }
+}

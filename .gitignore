@@ -1,0 +1,8 @@
+/target
+/.env
+**/node_modules
+client/dist
+crates/lethe-server/static/js/*.js
+crates/lethe-server/static/js/*.js.map
+*.swp
+.DS_Store

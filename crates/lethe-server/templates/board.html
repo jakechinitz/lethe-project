@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}/{{ board_id }}/ &middot; Lethe{% endblock %}
+{% block head %}
+<meta name="lethe-board-id" content="{{ board_id }}">
+<meta name="lethe-pow-bits" content="{{ pow_bits }}">
+{% endblock %}
+{% block main %}
+<h1>/{{ board_id }}/</h1>
+
+<section class="thread-list">
+  <h2>Threads</h2>
+  {% if threads.is_empty() %}
+    <p class="muted">No threads yet. Be the first.</p>
+  {% else %}
+    <ul>
+    {% for t in threads %}
+      <li><a href="/b/{{ board_id }}/t/{{ t.id_b64 }}">{{ t.title }}</a></li>
+    {% endfor %}
+    </ul>
+  {% endif %}
+</section>
+
+<section class="new-thread">
+  <h2>New thread</h2>
+  <form id="new-thread-form">
+    <label>
+      Title
+      <input name="title" maxlength="256" required>
+    </label>
+    <label>
+      Body
+      <textarea name="body" rows="6" maxlength="16384" required></textarea>
+    </label>
+    <button type="submit">Post (computes proof-of-work)</button>
+    <p class="status" id="new-thread-status"></p>
+  </form>
+</section>
+
+<script type="module" src="/static/js/board.js"></script>
+{% endblock %}

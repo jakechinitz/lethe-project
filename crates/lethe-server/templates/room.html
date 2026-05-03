@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Encrypted room &middot; Lethe{% endblock %}
+{% block head %}
+<meta name="lethe-room-id" content="{{ room_id_b64 }}">
+{% endblock %}
+{% block main %}
+<aside class="warn-banner">
+  Messages are encrypted on your device — the server stores ciphertext
+  only. <strong>Anyone you let into this room can copy or leak messages.</strong>
+  This room has no forward secrecy: if any member's device is compromised,
+  all past and future messages in this room are exposed. Closing or
+  clearing this browser deletes your keys —
+  <a href="/my-rooms">back them up to a passphrase-encrypted file</a>
+  if you want to keep access across sessions.
+  <br>
+  <strong>This product cannot tell you whether a room or a member is safe.</strong>
+  It can show you continuity, provenance, and the invite path.
+</aside>
+
+<section class="provenance" id="provenance">
+  <h2>Provenance</h2>
+  <p id="provenance-text" class="muted">Checking…</p>
+</section>
+
+<section class="members" id="members">
+  <h2>Members <span id="member-count" class="muted member-count"></span></h2>
+  <div id="members-list"></div>
+</section>
+
+<section class="messages" id="messages">
+  <h2>Messages</h2>
+  <div id="messages-list"></div>
+  <form id="send-form">
+    <textarea name="body" rows="3" maxlength="16384" required></textarea>
+    <button type="submit">Send</button>
+    <p class="status" id="send-status"></p>
+  </form>
+</section>
+
+<script type="module" src="/static/js/room.js"></script>
+{% endblock %}
