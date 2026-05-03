@@ -49,3 +49,28 @@ export function durationSince(iso: string): string {
   const days = Math.round(hours / 24);
   return `${days}d`;
 }
+
+/// Renders an ISO timestamp as a date+time the user can read at a glance:
+///   - within today       → "2:23 PM"
+///   - within this year   → "Aug 15, 2:23 PM"
+///   - older              → "Aug 15, 2024, 2:23 PM"
+/// Always uses the visitor's local timezone.
+export function formatPostTimestamp(iso: string): string {
+  const d = new Date(iso);
+  const now = new Date();
+  const sameDay =
+    d.getFullYear() === now.getFullYear() &&
+    d.getMonth() === now.getMonth() &&
+    d.getDate() === now.getDate();
+  if (sameDay) {
+    return d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  }
+  const sameYear = d.getFullYear() === now.getFullYear();
+  return d.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    ...(sameYear ? {} : { year: "numeric" }),
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}

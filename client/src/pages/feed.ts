@@ -1,7 +1,7 @@
 // Feed page: renders the cross-board thread list with a category filter
 // and infinite scroll, and hosts the new-thread form.
 
-import { $, clear, durationSince, el, meta, text } from "../lib/dom";
+import { $, clear, el, formatPostTimestamp, meta, text } from "../lib/dom";
 import { b64encode, utf8 } from "../lib/b64";
 import { findNonce } from "../lib/pow";
 
@@ -103,7 +103,7 @@ function renderItem(item: FeedItem): HTMLElement {
       el("span", { class: "badge cat" }, [label]),
       ` · `,
       `${replies} ${replies === 1 ? "reply" : "replies"}`,
-      ` · last activity ${durationSince(item.last_post_at)} ago`,
+      ` · last activity ${formatPostTimestamp(item.last_post_at)}`,
     ]),
   );
   return article;

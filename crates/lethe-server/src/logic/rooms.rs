@@ -191,6 +191,51 @@ pub async fn join(
     })
 }
 
+/// Self-leave: a member removes themselves. The signed request binds
+/// `room_id` and a fresh ts; nonce-deduped against replay just like
+/// list and remove.
+///
+/// We deliberately do NOT auto-rekey on leave. Honest leavers are cut
+/// off from new reads/writes the moment `removed_at` is set (every
+/// membership check filters on `removed_at IS NULL`). If the room
+/// creator wants to invalidate the leaver's old room key — for an
+/// adversarial leaver — they can run remove-and-rekey afterward.
+pub async fn leave(
+    db: &PgPool,
+    room_id_b64: &str,
+    req: LeaveRoomReq,
+) -> AppResult<()> {
+    let room_id = ids::unb64(room_id_b64).map_err(|_| AppError::BadRequest("room_id b64"))?;
+    if db::rooms::meta_by_id(db, &room_id).await?.is_none() {
+        return Err(AppError::NotFound);
+    }
+    let sig_pk = decode_pubkey(&req.sig_pubkey, "sig_pubkey")?;
+    let sig = ids::unb64(&req.sig).map_err(|_| AppError::BadRequest("sig b64"))?;
+    if sig.len() != SIG_LEN {
+        return Err(AppError::BadRequest("sig length"));
+    }
+    let now_ts = time::OffsetDateTime::now_utc().unix_timestamp();
+    if (now_ts - req.ts).abs() > 60 {
+        return Err(AppError::BadRequest("ts outside ±60s window"));
+    }
+    crypto::verify_leave_request(&sig_pk, &sig, &room_id, req.ts)?;
+
+    if !db::nonces::record(db, "leave", &sig_pk, req.ts).await? {
+        return Err(AppError::Conflict("replay: this signature was already used"));
+    }
+
+    if !db::rooms::is_member(db, &room_id, &sig_pk).await? {
+        return Err(AppError::Forbidden("not a current member of this room"));
+    }
+
+    let now = ltime::now_coarse();
+    let ok = db::rooms::soft_remove_by_sig(db, &room_id, &sig_pk, now).await?;
+    if !ok {
+        return Err(AppError::Conflict("already removed"));
+    }
+    Ok(())
+}
+
 pub async fn invite_info(
     db: &PgPool,
     invite_code: &str,

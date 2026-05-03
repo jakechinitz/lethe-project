@@ -233,6 +233,25 @@ pub fn canonical_room_provenance(origin_thread: &[u8], creator_thread_pubkey: &[
     buf
 }
 
+/// Body of `POST /api/rooms/:room_id/leave`. The signer's `sig_pubkey`
+/// is taken to be the leaving member.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LeaveRoomReq {
+    pub sig_pubkey: B64,
+    pub ts: i64,
+    pub sig: B64,
+}
+
+/// Canonical bytes the leaving member signs:
+///   `b"lethe-leave-v1\0" || room_id || ts_le8`.
+pub fn canonical_leave_request(room_id: &[u8], ts: i64) -> Vec<u8> {
+    let mut buf = Vec::with_capacity(15 + room_id.len() + 8);
+    buf.extend_from_slice(b"lethe-leave-v1\x00");
+    buf.extend_from_slice(room_id);
+    buf.extend_from_slice(&ts.to_le_bytes());
+    buf
+}
+
 /// Canonical bytes a joiner signs to prove ownership of an allowlisted
 /// thread-signing key when joining a restricted room. Binds the invite
 /// code (so a captured signature can't be reused on another invite) and

@@ -183,6 +183,22 @@ server rejects anything outside a ±60 s window AND inserts the
 a duplicate is rejected with 409. Old rows are pruned by the retention
 worker every hour.
 
+## Leaving a room
+
+Members can leave a room they're in. The room page has a Leave button
+that signs `b"lethe-leave-v1\0" || room_id || ts_le8` with the
+member's per-room sig key and POSTs to `/api/rooms/:id/leave`. The
+server soft-removes the row (`removed_at = now()`); every membership
+check filters on `removed_at IS NULL`, so the leaver immediately fails
+to post or list. The browser then wipes the local `lethe.room.<id>`
+entry so old room keys don't linger on the device.
+
+Leaving does **not** auto-rekey. Honest leavers are cut off the moment
+their row is flipped — they can't fetch new ciphertext from the
+server. If you want belt-and-suspenders against a leaver who already
+exfiltrated their key elsewhere, the room creator can run the
+existing remove-and-rekey flow afterward to rotate the room key.
+
 ## Restricting who can join an encrypted room
 
 When creating a room from a thread, the creator can pick "Only specific

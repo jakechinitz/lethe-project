@@ -133,6 +133,29 @@ pub async fn add_member(
     Ok(())
 }
 
+/// Soft-removes a member by sig pubkey. Returns true iff a row was
+/// flipped from active → removed.
+pub async fn soft_remove_by_sig(
+    db: &PgPool,
+    room_id: &[u8],
+    sig_pubkey: &[u8],
+    now: OffsetDateTime,
+) -> Result<bool, sqlx::Error> {
+    let res = sqlx::query(
+        "UPDATE room_members
+         SET removed_at = $3
+         WHERE room_id = $1
+           AND member_sig_pubkey = $2
+           AND removed_at IS NULL",
+    )
+    .bind(room_id)
+    .bind(sig_pubkey)
+    .bind(now)
+    .execute(db)
+    .await?;
+    Ok(res.rows_affected() == 1)
+}
+
 pub async fn active_member_count(
     db: &PgPool,
     room_id: &[u8],

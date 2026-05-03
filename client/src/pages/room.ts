@@ -37,6 +37,11 @@ async function main(): Promise<void> {
   setInterval(tickMembers, 4000);
   setInterval(tickMessages, 3000);
 
+  const leaveBtn = document.querySelector<HTMLButtonElement>("#leave-btn");
+  if (leaveBtn) {
+    leaveBtn.addEventListener("click", onLeave);
+  }
+
   sendForm.addEventListener("submit", async (ev) => {
     ev.preventDefault();
     const fresh = roomkey.read(roomIdB64);
@@ -183,6 +188,34 @@ function renderMembers(members: MemberView[]): void {
   membersList.appendChild(
     el("p", { class: "muted epoch-label" }, [trust.keyEpoch(currentEpoch)]),
   );
+}
+
+async function onLeave(): Promise<void> {
+  const keys = roomkey.read(roomIdB64);
+  if (!keys) {
+    alert("No keys for this room. Already gone.");
+    return;
+  }
+  if (!confirm(
+      "Leave this room? You'll be cut off from new messages and posts " +
+        "immediately. The room key on this device will be wiped — old " +
+        "messages stop being readable here too. There's no undo.",
+    )) {
+    return;
+  }
+  const ts = Math.floor(Date.now() / 1000);
+  const sig = await roomkey.signLeaveRequest(roomIdBytes, ts, keys.sigPriv);
+  try {
+    await api.leaveRoom(roomIdB64, {
+      sig_pubkey: b64encode(keys.sigPub),
+      ts,
+      sig: b64encode(sig),
+    });
+    localStorage.removeItem(`lethe.room.${roomIdB64}`);
+    location.href = "/my-rooms";
+  } catch (e) {
+    alert(`Leave failed: ${(e as Error).message}`);
+  }
 }
 
 async function removeMember(target: MemberView): Promise<void> {

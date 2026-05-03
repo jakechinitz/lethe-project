@@ -643,6 +643,30 @@ select {
   color: var(--bg);
 }
 
+.leave-section {
+  margin: 2rem 0 1rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--hairline);
+}
+.leave-section .danger {
+  border-color: var(--line);
+}
+.leave-section .hint {
+  margin-top: .35rem;
+}
+
+.join-actions {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin: 1rem 0;
+}
+.join-actions .decline {
+  color: var(--muted);
+  font-size: .9rem;
+}
+
 .invite-mode {
   border: 1px solid var(--line);
   padding: .8rem 1rem;

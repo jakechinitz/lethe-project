@@ -38,6 +38,17 @@ pub fn verify_room_provenance(
     verify_ed25519(creator_thread_pubkey, provenance_sig, &payload)
 }
 
+/// Verifies a self-leave request signed by the leaving member.
+pub fn verify_leave_request(
+    sig_pubkey: &[u8],
+    sig: &[u8],
+    room_id: &[u8],
+    ts: i64,
+) -> Result<(), CryptoError> {
+    let payload = rooms::canonical_leave_request(room_id, ts);
+    verify_ed25519(sig_pubkey, sig, &payload)
+}
+
 /// Verifies a join proof for a restricted (allowlisted) room invite.
 pub fn verify_join_proof(
     proof_thread_pubkey: &[u8],

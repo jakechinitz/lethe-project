@@ -9,7 +9,10 @@
   Joining generates new signing and encryption keys on this device. They
   are not shared with the server.
 </p>
-<button id="join-btn" type="button">Generate keys and request access</button>
+<div class="join-actions">
+  <button id="join-btn" type="button">Generate keys and request access</button>
+  <a class="decline" href="/">Cancel — I don't want to join</a>
+</div>
 <p class="status" id="join-status"></p>
 <p id="open-room-line" hidden><a id="open-room" href="">Open room</a></p>
 <script type="module" src="/static/js/room_join.js"></script>

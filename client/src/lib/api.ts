@@ -63,6 +63,8 @@ export const api = {
       `/api/rooms/${roomId}/remove`,
       { method: "POST", body },
     ),
+  leaveRoom: (roomId: string, body: unknown) =>
+    call<void>(`/api/rooms/${roomId}/leave`, { method: "POST", body }),
 };
 
 export interface PostView {

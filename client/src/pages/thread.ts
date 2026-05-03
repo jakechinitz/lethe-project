@@ -4,7 +4,7 @@
 // Ed25519 identity.
 
 import { api, PostView } from "../lib/api";
-import { $, clear, el, meta, text } from "../lib/dom";
+import { $, clear, el, formatPostTimestamp, meta, text } from "../lib/dom";
 import { b64decode, b64encode } from "../lib/b64";
 import { findNonce } from "../lib/pow";
 import * as tkey from "../lib/threadkey";
@@ -198,7 +198,7 @@ function renderPost(
 
   const created = new Date(p.created_at);
   const ts = el("time", { title: created.toISOString(), dateTime: p.created_at }, [
-    `${humanAgo(created)} ago`,
+    formatPostTimestamp(p.created_at),
   ]);
 
   const author = el("span", { class: "author" }, [labels.get(p.seq) ?? "?"]);
@@ -246,17 +246,6 @@ function renderBody(text: string): Array<Node | string> {
     out.push(text.slice(lastIndex));
   }
   return out;
-}
-
-function humanAgo(then: Date): string {
-  const seconds = Math.max(0, Math.round((Date.now() - then.getTime()) / 1000));
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.round(seconds / 60);
-  if (minutes < 60) return `${minutes}m`;
-  const hours = Math.round(minutes / 60);
-  if (hours < 48) return `${hours}h`;
-  const days = Math.round(hours / 24);
-  return `${days}d`;
 }
 
 function scrollToHashTarget(): void {
