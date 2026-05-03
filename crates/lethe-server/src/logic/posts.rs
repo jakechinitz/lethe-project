@@ -102,6 +102,7 @@ fn reason_static(r: moderation::Reason) -> &'static str {
         moderation::Reason::SpamLinkDensity  => "rejected: spam_link_density",
         moderation::Reason::SpamTooShort     => "rejected: spam_too_short",
         moderation::Reason::MalwareLink      => "rejected: malware_link",
+        moderation::Reason::HarassmentOrHate => "rejected: harassment_or_hate",
         moderation::Reason::AiClassifier     => "rejected: ai_classifier",
     }
 }

@@ -162,6 +162,12 @@ before insert. Never sees private-room ciphertext.
    - `spam_duplicate` — same body in the same board within 24 hours.
    - `malware_link` — body contains a substring from a configurable
      host blocklist (empty by default).
+   - `harassment_or_hate` — body trips the `rustrict` profanity
+     classifier at SEVERE intensity AND in either the OFFENSIVE
+     (slurs / hate speech) or MEAN (targeted insult) category.
+     Strong language alone (PROFANE) is intentionally allowed
+     through — the JSM grounding principle on the welcome page
+     says we don't censor speech unless it crosses into harm.
 2. **AI classifier** (`src/moderation/classifier.rs`): a `Classifier`
    trait. The default `NoopClassifier` allows everything — no AI calls
    happen until an operator swaps in a real implementation. The slot

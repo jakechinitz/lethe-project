@@ -41,17 +41,19 @@ pub enum Reason {
     SpamLinkDensity,
     SpamTooShort,
     MalwareLink,
+    HarassmentOrHate,
     AiClassifier,
 }
 
 impl Reason {
     pub fn code(&self) -> &'static str {
         match self {
-            Reason::SpamDuplicate => "spam_duplicate",
-            Reason::SpamLinkDensity => "spam_link_density",
-            Reason::SpamTooShort => "spam_too_short",
-            Reason::MalwareLink => "malware_link",
-            Reason::AiClassifier => "ai_classifier",
+            Reason::SpamDuplicate    => "spam_duplicate",
+            Reason::SpamLinkDensity  => "spam_link_density",
+            Reason::SpamTooShort     => "spam_too_short",
+            Reason::MalwareLink      => "malware_link",
+            Reason::HarassmentOrHate => "harassment_or_hate",
+            Reason::AiClassifier     => "ai_classifier",
         }
     }
 }

@@ -39,6 +39,11 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 dotenvy = "0.15"
 
+# Profanity / hate-speech detector. Pure Rust, no model files, MIT.
+# Used by moderation::rules to auto-delete severe slurs and severe
+# harassment. Mild profanity is intentionally allowed through.
+rustrict = "0.7"
+
 [dev-dependencies]
 reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
 dryoc = "0.7"
