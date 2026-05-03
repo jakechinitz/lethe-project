@@ -242,23 +242,33 @@ input[type="checkbox"] {
 .posts {
   border-top: 1px solid var(--line);
 }
-.posts .post {
-  padding: 1rem 0;
-  border-bottom: 1px solid var(--hairline);
-  scroll-margin-top: 1rem;
-}
+
+/* OP card: distinct grey background, larger feel. */
 .posts .post.op {
   border: 1px solid var(--line);
+  background: #f3f3f1;
   padding: 1.25rem 1.25rem;
-  margin-bottom: 1.25rem;
-  background: var(--bg);
+  margin: 1rem 0 1.5rem;
 }
 .posts .post.op .body {
   font-size: 1.05rem;
 }
+
+/* Comments: indented by depth, alternating shade by depth. */
+.posts .comment {
+  padding: .8rem 1rem;
+  border-left: 1px solid var(--hairline);
+  border-bottom: 1px solid var(--hairline);
+  scroll-margin-top: 1rem;
+}
+.posts .comment.shade-a { background: #ffffff; }
+.posts .comment.shade-b { background: #f6f6f3; }
+.posts .comment.depth-1 { margin-left: 1.25rem; }
+.posts .comment.depth-2 { margin-left: 2.5rem; }
+
 .posts .post .meta {
   font-family: var(--mono);
-  font-size: .82rem;
+  font-size: .8rem;
   color: var(--muted);
   margin-bottom: .35rem;
   display: flex;
@@ -266,10 +276,13 @@ input[type="checkbox"] {
   align-items: baseline;
   flex-wrap: wrap;
 }
+.posts .post .meta .author {
+  color: var(--fg);
+  font-weight: 600;
+}
 .posts .post .seq-link {
   color: var(--muted);
   text-decoration: none;
-  font-weight: 600;
 }
 .posts .post .seq-link:hover { color: var(--fg); text-decoration: underline; }
 .posts .post .seq-link.copied::after {
@@ -659,4 +672,9 @@ select {
     scrollbar-width: thin;
   }
   .tab { white-space: nowrap; padding: .5rem .8rem; }
+  /* The reply button stays inline at comment-meta size on mobile too. */
+  .posts .post .reply-btn { width: auto; align-self: auto; }
+  .posts .comment.depth-1 { margin-left: .65rem; }
+  .posts .comment.depth-2 { margin-left: 1.3rem; }
+  .posts .comment { padding: .7rem .75rem; }
 }
