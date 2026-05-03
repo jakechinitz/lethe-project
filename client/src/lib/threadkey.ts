@@ -41,6 +41,21 @@ export function hasKeypair(threadIdB64: string): boolean {
   return localStorage.getItem(storageKey(threadIdB64)) !== null;
 }
 
+/// Stores a keypair generated elsewhere — used by the new-thread form
+/// when the OP claims identity, since the keypair is minted before the
+/// thread id is known to the server.
+export function persistKeypair(
+  threadIdB64: string,
+  publicKey: Uint8Array,
+  privateKey: Uint8Array,
+): void {
+  const stored: StoredKeypair = {
+    publicKey: b64encode(publicKey),
+    privateKey: b64encode(privateKey),
+  };
+  localStorage.setItem(storageKey(threadIdB64), JSON.stringify(stored));
+}
+
 export function forget(threadIdB64: string): void {
   localStorage.removeItem(storageKey(threadIdB64));
 }

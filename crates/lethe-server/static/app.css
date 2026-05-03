@@ -529,6 +529,17 @@ select {
   appearance: none;
   width: 100%;
 }
+/* While the placeholder option is selected, the select's required
+ * constraint fails, which is what `:invalid` matches against. Show the
+ * "Select a category" prompt in the bright Excel-blue requested. Picking
+ * a real option clears `:invalid` and the text reverts to black. */
+select:required:invalid {
+  color: rgb(0, 0, 255);
+}
+select option {
+  color: var(--fg);
+  background: var(--bg);
+}
 
 .feed {
   border-top: 1px solid var(--line);

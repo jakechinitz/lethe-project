@@ -4,6 +4,8 @@
 import { $, clear, el, formatPostTimestamp, meta, text } from "../lib/dom";
 import { b64encode, utf8 } from "../lib/b64";
 import { findNonce } from "../lib/pow";
+import { sodium } from "../lib/sodium";
+import * as tkey from "../lib/threadkey";
 
 interface FeedItem {
   thread_id: string;
@@ -133,24 +135,54 @@ async function onSubmit(ev: SubmitEvent): Promise<void> {
   const boardId = String(data.get("board_id") ?? "");
   if (!title || !body || !boardId) return;
 
+  const claimOp =
+    document.querySelector<HTMLInputElement>("#claim-op-identity")?.checked ?? false;
+
   text(status, "Computing proof-of-work…");
   const nonce = await findNonce(utf8(boardId), body, powBits);
+
+  // Mint a fresh thread_id locally so the OP signature can include it.
+  // For unsigned posts we still mint it here for consistency; the server
+  // accepts either a client-supplied or auto-generated id.
+  const s = await sodium();
+  const threadIdBytes = s.randombytes_buf(16);
+  const threadIdB64 = b64encode(threadIdBytes);
+
+  const reqBody: Record<string, unknown> = {
+    board_id: boardId,
+    title,
+    body,
+    pow_nonce: b64encode(nonce),
+    thread_id: threadIdB64,
+  };
+
+  let pendingKey: { publicKey: Uint8Array; privateKey: Uint8Array } | null = null;
+  if (claimOp) {
+    const kp = s.crypto_sign_keypair();
+    const sig = await tkey.signPost(threadIdBytes, body, kp.privateKey);
+    reqBody.pubkey = b64encode(kp.publicKey);
+    reqBody.signature = b64encode(sig);
+    pendingKey = { publicKey: kp.publicKey, privateKey: kp.privateKey };
+  }
+
   text(status, "Submitting…");
   try {
     const resp = await fetch("/api/threads", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        board_id: boardId,
-        title,
-        body,
-        pow_nonce: b64encode(nonce),
-      }),
+      body: JSON.stringify(reqBody),
     });
     if (!resp.ok) {
       throw new Error(`server ${resp.status}: ${await resp.text()}`);
     }
     const created: { thread_id: string } = await resp.json();
+
+    // Persist the thread key under the canonical localStorage slot so the
+    // thread page picks it up and tags future replies as OP.
+    if (pendingKey) {
+      tkey.persistKeypair(created.thread_id, pendingKey.publicKey, pendingKey.privateKey);
+    }
+
     location.href = `/b/${boardId}/t/${created.thread_id}`;
   } catch (e) {
     text(status, `Error: ${(e as Error).message}`);
