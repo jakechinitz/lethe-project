@@ -247,6 +247,38 @@ export async function signListRequest(
   return s.crypto_sign_detached(payload, sigPriv);
 }
 
+/// Signs a self-leave request: `b"lethe-leave-v1\x00" || room_id || ts_le8`.
+export async function signLeaveRequest(
+  roomId: Uint8Array,
+  unixTs: number,
+  sigPriv: Uint8Array,
+): Promise<Uint8Array> {
+  const s = await sodium();
+  const tsBytes = tsLeBytes(unixTs);
+  const payload = concat(utf8("lethe-leave-v1\x00"), roomId, tsBytes);
+  return s.crypto_sign_detached(payload, sigPriv);
+}
+
+/// Signs a join proof for a restricted invite:
+///   `b"lethe-join-v1\x00" || invite_code || box_pubkey || ts_le8`.
+/// Server checks the signer's pubkey is on the room's allowlist.
+export async function signJoinProof(
+  inviteCode: string,
+  boxPub: Uint8Array,
+  unixTs: number,
+  threadSigPriv: Uint8Array,
+): Promise<Uint8Array> {
+  const s = await sodium();
+  const tsBytes = tsLeBytes(unixTs);
+  const payload = concat(
+    utf8("lethe-join-v1\x00"),
+    utf8(inviteCode),
+    boxPub,
+    tsBytes,
+  );
+  return s.crypto_sign_detached(payload, threadSigPriv);
+}
+
 /// Signs a remove-and-rekey request:
 ///   `b"lethe-remove-v1\x00" || room_id || ts_le8 || target_box_pubkey`.
 /// Server additionally checks the signer is the creator.

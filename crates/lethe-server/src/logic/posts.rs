@@ -38,23 +38,58 @@ pub async fn create_thread(
         return Err(AppError::BadRequest(reason_static(reason)));
     }
 
-    let thread_id = ids::new_ulid();
+    // Client may pre-mint the thread id so it can be folded into the OP
+    // signature. Required when pubkey is present.
+    let thread_id_vec: Vec<u8> = match &req.thread_id {
+        Some(b) => {
+            let v = ids::unb64(b).map_err(|_| AppError::BadRequest("thread_id b64"))?;
+            if v.len() != 16 {
+                return Err(AppError::BadRequest("thread_id length"));
+            }
+            v
+        }
+        None => ids::new_ulid().to_vec(),
+    };
+
+    let (pubkey_bytes, signature_bytes) = match (&req.pubkey, &req.signature) {
+        (None, None) => (None, None),
+        (Some(pk), Some(sig)) => {
+            if req.thread_id.is_none() {
+                return Err(AppError::BadRequest(
+                    "thread_id required when claiming OP identity",
+                ));
+            }
+            let pk = ids::unb64(pk).map_err(|_| AppError::BadRequest("pubkey b64"))?;
+            let sig = ids::unb64(sig).map_err(|_| AppError::BadRequest("signature b64"))?;
+            crypto::verify_post_signature(&pk, &sig, &thread_id_vec, &req.body)?;
+            (Some(pk), Some(sig))
+        }
+        _ => return Err(AppError::BadRequest("pubkey/signature must come together")),
+    };
+
     let now = ltime::now_coarse();
-    db::threads::create(db, &thread_id, &req.board_id, &req.title, now).await?;
+    db::threads::create(db, &thread_id_vec, &req.board_id, &req.title, now)
+        .await
+        .map_err(|e| match &e {
+            sqlx::Error::Database(d) if d.constraint() == Some("threads_pkey") => {
+                AppError::Conflict("thread_id already exists")
+            }
+            _ => AppError::Db(e),
+        })?;
     let inserted = db::posts::insert(
         db,
         db::posts::NewPost {
-            thread_id: &thread_id,
+            thread_id: &thread_id_vec,
             body: &req.body,
             pow_nonce: &nonce,
-            pubkey: None,
-            signature: None,
+            pubkey: pubkey_bytes.as_deref(),
+            signature: signature_bytes.as_deref(),
             created_at: now,
         },
     )
     .await?;
     Ok(CreateThreadResp {
-        thread_id: ids::b64(&thread_id),
+        thread_id: ids::b64(&thread_id_vec),
         seq: inserted.seq,
     })
 }
@@ -67,6 +102,7 @@ fn reason_static(r: moderation::Reason) -> &'static str {
         moderation::Reason::SpamLinkDensity  => "rejected: spam_link_density",
         moderation::Reason::SpamTooShort     => "rejected: spam_too_short",
         moderation::Reason::MalwareLink      => "rejected: malware_link",
+        moderation::Reason::HarassmentOrHate => "rejected: harassment_or_hate",
         moderation::Reason::AiClassifier     => "rejected: ai_classifier",
     }
 }

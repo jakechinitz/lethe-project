@@ -35,6 +35,8 @@ export const api = {
     ),
   createRoom: (body: unknown) =>
     call<{ room_id: string; invite_code: string }>("/api/rooms", { method: "POST", body }),
+  inviteInfo: (inviteCode: string) =>
+    call<InviteInfo>(`/api/rooms/by-invite/${inviteCode}/info`, { method: "GET" }),
   joinRoom: (inviteCode: string, body: unknown) =>
     call<{ room_id: string; members: Array<MemberView> }>(
       `/api/rooms/by-invite/${inviteCode}/join`,
@@ -61,6 +63,8 @@ export const api = {
       `/api/rooms/${roomId}/remove`,
       { method: "POST", body },
     ),
+  leaveRoom: (roomId: string, body: unknown) =>
+    call<void>(`/api/rooms/${roomId}/leave`, { method: "POST", body }),
 };
 
 export interface PostView {
@@ -100,4 +104,11 @@ export interface MessageView {
   ciphertext: string;
   sender_sig: string;
   created_at: string;
+}
+
+export interface InviteInfo {
+  room_id: string;
+  origin_thread?: string | null;
+  restricted: boolean;
+  allowlist_thread_pubkeys?: string[] | null;
 }

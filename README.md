@@ -162,6 +162,12 @@ before insert. Never sees private-room ciphertext.
    - `spam_duplicate` — same body in the same board within 24 hours.
    - `malware_link` — body contains a substring from a configurable
      host blocklist (empty by default).
+   - `harassment_or_hate` — body trips the `rustrict` profanity
+     classifier at SEVERE intensity AND in either the OFFENSIVE
+     (slurs / hate speech) or MEAN (targeted insult) category.
+     Strong language alone (PROFANE) is intentionally allowed
+     through — the JSM grounding principle on the welcome page
+     says we don't censor speech unless it crosses into harm.
 2. **AI classifier** (`src/moderation/classifier.rs`): a `Classifier`
    trait. The default `NoopClassifier` allows everything — no AI calls
    happen until an operator swaps in a real implementation. The slot
@@ -182,6 +188,46 @@ server rejects anything outside a ±60 s window AND inserts the
 `(kind, sig_pubkey, ts)` tuple into a `request_nonces` table on accept;
 a duplicate is rejected with 409. Old rows are pruned by the retention
 worker every hour.
+
+## Leaving a room
+
+Members can leave a room they're in. The room page has a Leave button
+that signs `b"lethe-leave-v1\0" || room_id || ts_le8` with the
+member's per-room sig key and POSTs to `/api/rooms/:id/leave`. The
+server soft-removes the row (`removed_at = now()`); every membership
+check filters on `removed_at IS NULL`, so the leaver immediately fails
+to post or list. The browser then wipes the local `lethe.room.<id>`
+entry so old room keys don't linger on the device.
+
+Leaving does **not** auto-rekey. Honest leavers are cut off the moment
+their row is flipped — they can't fetch new ciphertext from the
+server. If you want belt-and-suspenders against a leaver who already
+exfiltrated their key elsewhere, the room creator can run the
+existing remove-and-rekey flow afterward to rotate the room key.
+
+## Restricting who can join an encrypted room
+
+When creating a room from a thread, the creator can pick "Only specific
+anons from this thread" and tick the signed contributors they want to
+invite. The server stores the chosen thread-signing pubkeys on the room
+as an allowlist.
+
+The invite link is the same as before, but `/api/rooms/by-invite/:code/info`
+now reports `restricted: true`. The join endpoint requires the joiner
+to include a fresh signature from one of the allowlisted thread keys
+over `b"lethe-join-v1\0" || invite_code || box_pubkey || ts_le8`. The
+client looks up the joiner's local thread key, signs the proof
+automatically, and submits it. A non-allowlisted person — or anyone
+who never claimed a thread-local identity in the originating thread —
+can't generate a valid proof and gets 403.
+
+Two caveats worth knowing:
+
+- Anons who posted *fully* anonymously (no thread identity) cannot be
+  invited this way — they have no key the server can verify.
+- The mechanism prevents *unauthorized* joins through the invite link.
+  It does not prevent a legitimately-allowlisted member from leaking
+  the room afterward; that's still a member-removal problem.
 
 ## Removing members and rotating room keys
 

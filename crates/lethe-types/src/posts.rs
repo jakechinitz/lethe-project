@@ -9,6 +9,20 @@ pub struct CreateThreadReq {
     pub title: String,
     pub body: String,
     pub pow_nonce: B64,
+    /// Client-minted 16-byte ULID. Required when `pubkey` is present
+    /// because the signature payload includes the thread id; optional
+    /// otherwise (server generates one).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread_id: Option<B64>,
+    /// Optional Ed25519 public key, identical semantics to a signed
+    /// reply: any later post signed with the same key shows as the
+    /// same anon (and as "OP" since it's post #1).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pubkey: Option<B64>,
+    /// Detached Ed25519 signature over
+    /// `b"lethe-post-v1" || thread_id || body`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signature: Option<B64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

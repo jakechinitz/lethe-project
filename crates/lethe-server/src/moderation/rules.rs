@@ -44,11 +44,35 @@ pub async fn evaluate(
         return Ok(Some(Reason::SpamLinkDensity));
     }
 
+    if is_severe_harassment(body) {
+        return Ok(Some(Reason::HarassmentOrHate));
+    }
+
     if is_recent_duplicate(db, board_id, body).await? {
         return Ok(Some(Reason::SpamDuplicate));
     }
 
     Ok(None)
+}
+
+/// Hate-speech / severe-harassment check via `rustrict`. Targets exactly
+/// the categories the site's rules already prohibit (harassment, hate
+/// speech, slurs) and deliberately leaves profanity-per-se alone — the
+/// JSM grounding principle on the welcome page says we don't censor
+/// strong language unless it crosses into harm.
+///
+/// The check fires only when rustrict reports BOTH:
+///   - severity = SEVERE, AND
+///   - category includes OFFENSIVE (slurs / hate speech) or MEAN
+///     (targeted harassment).
+///
+/// "fuck this is great" stays through (PROFANE, not OFFENSIVE/MEAN).
+/// A racial slur, severe insult-attack at a person, or obvious bypass
+/// attempt ("n i g r", "f@gg0t") is rejected.
+fn is_severe_harassment(body: &str) -> bool {
+    use rustrict::{Censor, Type};
+    let typ: Type = Censor::from_str(body).analyze();
+    typ.is(Type::SEVERE) && (typ.is(Type::OFFENSIVE) || typ.is(Type::MEAN))
 }
 
 fn has_blocklisted_host(body: &str) -> bool {

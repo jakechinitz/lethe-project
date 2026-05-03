@@ -14,6 +14,8 @@ pub struct NewRoom<'a> {
     pub creator_thread_pubkey: Option<&'a [u8]>,
     pub provenance_sig: Option<&'a [u8]>,
     pub created_at: OffsetDateTime,
+    /// Optional invitee allowlist. `None` = open, `Some(vec)` = restricted.
+    pub allowlist_thread_pubkeys: Option<&'a [Vec<u8>]>,
 }
 
 /// Inserts a `rooms` row plus the creator's `room_members` row in one
@@ -24,8 +26,9 @@ pub async fn create(db: &PgPool, r: NewRoom<'_>) -> Result<[u8; 16], sqlx::Error
     sqlx::query(
         "INSERT INTO rooms
             (id, origin_thread, invite_code, created_at,
-             creator_thread_pubkey, provenance_sig)
-         VALUES ($1, $2, $3, $4, $5, $6)",
+             creator_thread_pubkey, provenance_sig,
+             allowlist_thread_pubkeys)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)",
     )
     .bind(&room_id[..])
     .bind(r.origin_thread)
@@ -33,6 +36,7 @@ pub async fn create(db: &PgPool, r: NewRoom<'_>) -> Result<[u8; 16], sqlx::Error
     .bind(r.created_at)
     .bind(r.creator_thread_pubkey)
     .bind(r.provenance_sig)
+    .bind(r.allowlist_thread_pubkeys)
     .execute(&mut *tx)
     .await?;
     sqlx::query(
@@ -59,6 +63,7 @@ pub struct RoomMeta {
     pub creator_thread_pubkey: Option<Vec<u8>>,
     pub provenance_sig: Option<Vec<u8>>,
     pub created_at: OffsetDateTime,
+    pub allowlist_thread_pubkeys: Option<Vec<Vec<u8>>>,
 }
 
 type RoomMetaTuple = (
@@ -67,16 +72,25 @@ type RoomMetaTuple = (
     Option<Vec<u8>>,
     Option<Vec<u8>>,
     OffsetDateTime,
+    Option<Vec<Vec<u8>>>,
 );
 
 fn meta_from_tuple(t: RoomMetaTuple) -> RoomMeta {
-    let (id, origin_thread, creator_thread_pubkey, provenance_sig, created_at) = t;
-    RoomMeta { id, origin_thread, creator_thread_pubkey, provenance_sig, created_at }
+    let (id, origin_thread, creator_thread_pubkey, provenance_sig, created_at, allowlist) = t;
+    RoomMeta {
+        id,
+        origin_thread,
+        creator_thread_pubkey,
+        provenance_sig,
+        created_at,
+        allowlist_thread_pubkeys: allowlist,
+    }
 }
 
 pub async fn meta_by_id(db: &PgPool, id: &[u8]) -> Result<Option<RoomMeta>, sqlx::Error> {
     let row: Option<RoomMetaTuple> = sqlx::query_as(
-        "SELECT id, origin_thread, creator_thread_pubkey, provenance_sig, created_at
+        "SELECT id, origin_thread, creator_thread_pubkey, provenance_sig, created_at,
+                allowlist_thread_pubkeys
          FROM rooms WHERE id = $1",
     )
     .bind(id)
@@ -87,7 +101,8 @@ pub async fn meta_by_id(db: &PgPool, id: &[u8]) -> Result<Option<RoomMeta>, sqlx
 
 pub async fn meta_by_invite(db: &PgPool, code: &str) -> Result<Option<RoomMeta>, sqlx::Error> {
     let row: Option<RoomMetaTuple> = sqlx::query_as(
-        "SELECT id, origin_thread, creator_thread_pubkey, provenance_sig, created_at
+        "SELECT id, origin_thread, creator_thread_pubkey, provenance_sig, created_at,
+                allowlist_thread_pubkeys
          FROM rooms WHERE invite_code = $1",
     )
     .bind(code)
@@ -116,6 +131,29 @@ pub async fn add_member(
     .execute(db)
     .await?;
     Ok(())
+}
+
+/// Soft-removes a member by sig pubkey. Returns true iff a row was
+/// flipped from active → removed.
+pub async fn soft_remove_by_sig(
+    db: &PgPool,
+    room_id: &[u8],
+    sig_pubkey: &[u8],
+    now: OffsetDateTime,
+) -> Result<bool, sqlx::Error> {
+    let res = sqlx::query(
+        "UPDATE room_members
+         SET removed_at = $3
+         WHERE room_id = $1
+           AND member_sig_pubkey = $2
+           AND removed_at IS NULL",
+    )
+    .bind(room_id)
+    .bind(sig_pubkey)
+    .bind(now)
+    .execute(db)
+    .await?;
+    Ok(res.rows_affected() == 1)
 }
 
 pub async fn active_member_count(

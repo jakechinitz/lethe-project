@@ -105,6 +105,58 @@ async fn ok_post_passes_and_no_log_entry_is_written() {
 }
 
 #[tokio::test]
+async fn mild_profanity_passes() {
+    // The site's grounding principles say strong language is fine; only
+    // hate speech / harassment auto-deletes.
+    let s = support::spawn().await;
+    let client = reqwest::Client::new();
+    let body = "fuck this is genuinely the best post i have written all day";
+    let resp = submit_thread(&client, &s.base_url, s.pow_bits, "economy", "ok", body).await;
+    assert!(
+        resp.status().is_success(),
+        "mild profanity should pass: {:?}",
+        resp
+    );
+    let count: (i64,) = sqlx::query_as("SELECT count(*) FROM moderation_actions")
+        .fetch_one(&s.db)
+        .await
+        .unwrap();
+    assert_eq!(count.0, 0);
+}
+
+#[tokio::test]
+async fn severe_slur_is_rejected_as_harassment() {
+    let s = support::spawn().await;
+    let client = reqwest::Client::new();
+    // A canonical English-language slur. We don't put this in the source
+    // tree as a literal; rustrict matches obvious bypass attempts too.
+    let slur_bypass = "You are a complete f@gg0t and i hope you die";
+    let resp = submit_thread(
+        &client,
+        &s.base_url,
+        s.pow_bits,
+        "economy",
+        "trash",
+        slur_bypass,
+    )
+    .await;
+    assert_eq!(resp.status().as_u16(), 400);
+    let text = resp.text().await.unwrap();
+    assert!(
+        text.contains("harassment_or_hate"),
+        "expected harassment_or_hate, got: {text}"
+    );
+
+    let rows: Vec<(String,)> =
+        sqlx::query_as("SELECT reason FROM moderation_actions")
+            .fetch_all(&s.db)
+            .await
+            .unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].0, "harassment_or_hate");
+}
+
+#[tokio::test]
 async fn too_short_body_is_rejected() {
     let s = support::spawn().await;
     let client = reqwest::Client::new();
