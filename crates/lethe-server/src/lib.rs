@@ -55,6 +55,10 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/rooms", post(routes::rooms::create))
         .route(
+            "/rooms/by-invite/:code/info",
+            get(routes::rooms::invite_info),
+        )
+        .route(
             "/rooms/by-invite/:code/join",
             post(routes::rooms::join),
         )

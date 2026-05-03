@@ -24,6 +24,13 @@ pub async fn join(
     Ok(Json(logic::rooms::join(&state.db, &invite_code, req).await?))
 }
 
+pub async fn invite_info(
+    State(state): State<AppState>,
+    Path(invite_code): Path<String>,
+) -> AppResult<Json<InviteInfo>> {
+    Ok(Json(logic::rooms::invite_info(&state.db, &invite_code).await?))
+}
+
 pub async fn wrap(
     State(state): State<AppState>,
     Path(room_id): Path<String>,

@@ -174,6 +174,22 @@ pub fn decrypt_message(
         .expect("decrypt")
 }
 
+pub fn sign_join_proof(
+    invite_code: &str,
+    box_pubkey: &[u8],
+    ts: i64,
+    sk: &SigningSecretKey,
+) -> Signature {
+    let mut payload = Vec::with_capacity(14 + invite_code.len() + 32 + 8);
+    payload.extend_from_slice(b"lethe-join-v1\x00");
+    payload.extend_from_slice(invite_code.as_bytes());
+    payload.extend_from_slice(box_pubkey);
+    payload.extend_from_slice(&ts.to_le_bytes());
+    let mut sig: Signature = [0u8; 64];
+    crypto_sign_detached(&mut sig, &payload, sk).expect("sign");
+    sig
+}
+
 pub fn sign_remove_request(
     room_id: &[u8],
     ts: i64,

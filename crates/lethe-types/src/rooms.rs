@@ -22,6 +22,13 @@ pub struct CreateRoomReq {
     /// Detached Ed25519 sig over `canonical_room_provenance(...)`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provenance_sig: Option<B64>,
+    /// If present and non-empty, only joiners able to prove control of one
+    /// of these thread-signing pubkeys may join via the invite link. The
+    /// pubkeys must each have signed at least one post in `origin_thread`;
+    /// the server enforces that when the room is created. Requires
+    /// `origin_thread` to be set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowlist_thread_pubkeys: Option<Vec<B64>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -34,6 +41,36 @@ pub struct CreateRoomResp {
 pub struct JoinRoomReq {
     pub box_pubkey: B64,
     pub sig_pubkey: B64,
+    /// For restricted (allowlisted) rooms, the joiner proves ownership of
+    /// one of the allowed thread-signing pubkeys. Three fields together:
+    /// `proof_thread_pubkey` (the Ed25519 thread key), `proof_ts` (a
+    /// fresh unix timestamp), and `proof_sig` (a detached signature over
+    /// `canonical_join_proof(invite_code, box_pubkey, ts)`). Open rooms
+    /// accept the request without these fields.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proof_thread_pubkey: Option<B64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proof_ts: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proof_sig: Option<B64>,
+}
+
+/// Public, unauthenticated view of an invite, used by the join page to
+/// figure out whether the invite is open or restricted before generating
+/// keys.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InviteInfo {
+    pub room_id: B64,
+    /// Originating thread, if any. `None` for free-standing rooms.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin_thread: Option<B64>,
+    /// `true` iff joining requires proving ownership of one of the
+    /// allowed thread-signing pubkeys.
+    pub restricted: bool,
+    /// Allowlisted thread-signing pubkeys, if restricted. Public so the
+    /// joiner can confirm they have a matching key locally.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowlist_thread_pubkeys: Option<Vec<B64>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -193,6 +230,20 @@ pub fn canonical_room_provenance(origin_thread: &[u8], creator_thread_pubkey: &[
     buf.extend_from_slice(b"lethe-room-v1\x00");
     buf.extend_from_slice(origin_thread);
     buf.extend_from_slice(creator_thread_pubkey);
+    buf
+}
+
+/// Canonical bytes a joiner signs to prove ownership of an allowlisted
+/// thread-signing key when joining a restricted room. Binds the invite
+/// code (so a captured signature can't be reused on another invite) and
+/// the joiner's box pubkey (so the proof can't be replayed by someone
+/// else who knows the same thread key but a different box pair).
+pub fn canonical_join_proof(invite_code: &str, box_pubkey: &[u8], ts: i64) -> Vec<u8> {
+    let mut buf = Vec::with_capacity(14 + invite_code.len() + 32 + 8);
+    buf.extend_from_slice(b"lethe-join-v1\x00");
+    buf.extend_from_slice(invite_code.as_bytes());
+    buf.extend_from_slice(box_pubkey);
+    buf.extend_from_slice(&ts.to_le_bytes());
     buf
 }
 

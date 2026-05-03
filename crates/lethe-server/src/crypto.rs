@@ -38,6 +38,18 @@ pub fn verify_room_provenance(
     verify_ed25519(creator_thread_pubkey, provenance_sig, &payload)
 }
 
+/// Verifies a join proof for a restricted (allowlisted) room invite.
+pub fn verify_join_proof(
+    proof_thread_pubkey: &[u8],
+    proof_sig: &[u8],
+    invite_code: &str,
+    box_pubkey: &[u8],
+    ts: i64,
+) -> Result<(), CryptoError> {
+    let payload = rooms::canonical_join_proof(invite_code, box_pubkey, ts);
+    verify_ed25519(proof_thread_pubkey, proof_sig, &payload)
+}
+
 /// Verifies the signature on a remove-and-rekey request.
 pub fn verify_remove_request(
     remover_sig_pubkey: &[u8],

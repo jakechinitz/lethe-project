@@ -183,6 +183,30 @@ server rejects anything outside a ±60 s window AND inserts the
 a duplicate is rejected with 409. Old rows are pruned by the retention
 worker every hour.
 
+## Restricting who can join an encrypted room
+
+When creating a room from a thread, the creator can pick "Only specific
+anons from this thread" and tick the signed contributors they want to
+invite. The server stores the chosen thread-signing pubkeys on the room
+as an allowlist.
+
+The invite link is the same as before, but `/api/rooms/by-invite/:code/info`
+now reports `restricted: true`. The join endpoint requires the joiner
+to include a fresh signature from one of the allowlisted thread keys
+over `b"lethe-join-v1\0" || invite_code || box_pubkey || ts_le8`. The
+client looks up the joiner's local thread key, signs the proof
+automatically, and submits it. A non-allowlisted person — or anyone
+who never claimed a thread-local identity in the originating thread —
+can't generate a valid proof and gets 403.
+
+Two caveats worth knowing:
+
+- Anons who posted *fully* anonymously (no thread identity) cannot be
+  invited this way — they have no key the server can verify.
+- The mechanism prevents *unauthorized* joins through the invite link.
+  It does not prevent a legitimately-allowlisted member from leaking
+  the room afterward; that's still a member-removal problem.
+
 ## Removing members and rotating room keys
 
 The room creator (the only member with no inviter) can remove any other

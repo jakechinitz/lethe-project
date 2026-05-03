@@ -46,23 +46,63 @@ pub async fn create(db: &PgPool, req: CreateRoomReq) -> AppResult<CreateRoomResp
         None => None,
     };
 
-    // Provenance is all-or-nothing: if any field is present, all must be,
-    // and the signature must verify against an actual thread participant.
+    // Provenance signature is all-or-nothing: `creator_thread_pubkey` and
+    // `provenance_sig` must come together and require `origin_thread`.
+    // `origin_thread` alone is allowed (used by the invitee allowlist
+    // flow to pin a thread without attaching a provenance attestation).
     let now = ltime::now_coarse();
-    let (origin_for_db, creator_pk_for_db, sig_for_db) =
-        match (&origin_thread, &creator_thread_pubkey, &provenance_sig) {
-            (Some(thread), Some(pk), Some(sig)) => {
-                if !db::posts::pubkey_signed_in_thread(db, thread, pk).await? {
+    let (origin_for_db, creator_pk_for_db, sig_for_db) = match (
+        &origin_thread,
+        &creator_thread_pubkey,
+        &provenance_sig,
+    ) {
+        (Some(thread), Some(pk), Some(sig)) => {
+            if !db::posts::pubkey_signed_in_thread(db, thread, pk).await? {
+                return Err(AppError::Forbidden(
+                    "creator_thread_pubkey did not sign in origin_thread",
+                ));
+            }
+            crypto::verify_room_provenance(pk, sig, thread)?;
+            (
+                Some(thread.as_slice()),
+                Some(pk.as_slice()),
+                Some(sig.as_slice()),
+            )
+        }
+        (Some(thread), None, None) => (Some(thread.as_slice()), None, None),
+        (None, None, None) => (None, None, None),
+        _ => {
+            return Err(AppError::BadRequest(
+                "creator_thread_pubkey and provenance_sig must come together with origin_thread",
+            ))
+        }
+    };
+
+    // Allowlist: only meaningful with origin_thread. Each pubkey must
+    // actually have signed in that thread, otherwise the entry is dead
+    // weight that no one can prove ownership of.
+    let allowlist_bytes: Option<Vec<Vec<u8>>> = match &req.allowlist_thread_pubkeys {
+        None => None,
+        Some(list) if list.is_empty() => None,
+        Some(list) => {
+            let thread = origin_thread
+                .as_ref()
+                .ok_or(AppError::BadRequest(
+                    "allowlist requires origin_thread",
+                ))?;
+            let mut decoded: Vec<Vec<u8>> = Vec::with_capacity(list.len());
+            for pk in list {
+                let bytes = decode_pubkey(pk, "allowlist_thread_pubkey")?;
+                if !db::posts::pubkey_signed_in_thread(db, thread, &bytes).await? {
                     return Err(AppError::Forbidden(
-                        "creator_thread_pubkey did not sign in origin_thread",
+                        "allowlist pubkey did not sign in origin_thread",
                     ));
                 }
-                crypto::verify_room_provenance(pk, sig, thread)?;
-                (Some(thread.as_slice()), Some(pk.as_slice()), Some(sig.as_slice()))
+                decoded.push(bytes);
             }
-            (None, None, None) => (None, None, None),
-            _ => return Err(AppError::BadRequest("provenance fields must come together")),
-        };
+            Some(decoded)
+        }
+    };
 
     let invite_code = ids::random_invite_code();
     let room_id = db::rooms::create(
@@ -76,6 +116,7 @@ pub async fn create(db: &PgPool, req: CreateRoomReq) -> AppResult<CreateRoomResp
             creator_thread_pubkey: creator_pk_for_db,
             provenance_sig: sig_for_db,
             created_at: now,
+            allowlist_thread_pubkeys: allowlist_bytes.as_deref(),
         },
     )
     .await?;
@@ -97,6 +138,39 @@ pub async fn join(
         .await?
         .ok_or(AppError::NotFound)?;
 
+    // Restricted invites: require a fresh signature from one of the
+    // allowlisted thread-signing keys over a payload that binds the
+    // invite code and the joiner's box pubkey.
+    if let Some(allowlist) = meta.allowlist_thread_pubkeys.as_ref() {
+        let proof_pk_b64 = req.proof_thread_pubkey.as_ref().ok_or(
+            AppError::Forbidden("this invite is restricted; proof_thread_pubkey required"),
+        )?;
+        let proof_ts = req
+            .proof_ts
+            .ok_or(AppError::Forbidden("proof_ts required"))?;
+        let proof_sig_b64 = req
+            .proof_sig
+            .as_ref()
+            .ok_or(AppError::Forbidden("proof_sig required"))?;
+
+        let proof_pk = decode_pubkey(proof_pk_b64, "proof_thread_pubkey")?;
+        let proof_sig = ids::unb64(proof_sig_b64)
+            .map_err(|_| AppError::BadRequest("proof_sig b64"))?;
+        if proof_sig.len() != SIG_LEN {
+            return Err(AppError::BadRequest("proof_sig length"));
+        }
+        let now_ts = time::OffsetDateTime::now_utc().unix_timestamp();
+        if (now_ts - proof_ts).abs() > 60 {
+            return Err(AppError::BadRequest("proof_ts outside ±60s window"));
+        }
+        if !allowlist.iter().any(|k| k.as_slice() == proof_pk.as_slice()) {
+            return Err(AppError::Forbidden(
+                "thread pubkey is not on this invite's allowlist",
+            ));
+        }
+        crypto::verify_join_proof(&proof_pk, &proof_sig, invite_code, &box_pk, proof_ts)?;
+    }
+
     // Cap the room size. Re-joining as the same box pubkey is idempotent
     // (the INSERT is ON CONFLICT DO NOTHING), so allow that even at the
     // cap by checking membership first.
@@ -114,6 +188,25 @@ pub async fn join(
     Ok(JoinRoomResp {
         room_id: ids::b64(&meta.id),
         members,
+    })
+}
+
+pub async fn invite_info(
+    db: &PgPool,
+    invite_code: &str,
+) -> AppResult<InviteInfo> {
+    let meta = db::rooms::meta_by_invite(db, invite_code)
+        .await?
+        .ok_or(AppError::NotFound)?;
+    let restricted = meta.allowlist_thread_pubkeys.is_some();
+    Ok(InviteInfo {
+        room_id: ids::b64(&meta.id),
+        origin_thread: meta.origin_thread.as_ref().map(|b| ids::b64(b)),
+        restricted,
+        allowlist_thread_pubkeys: meta
+            .allowlist_thread_pubkeys
+            .as_ref()
+            .map(|v| v.iter().map(|b| ids::b64(b)).collect()),
     })
 }
 
