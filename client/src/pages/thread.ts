@@ -1,5 +1,7 @@
-// Thread page: loads posts, lets the user reply anonymously or with a
-// thread-local Ed25519 identity ("same anon as #N").
+// Thread page: loads posts, renders them in a Reddit-style nested view
+// (OP card on top, replies indented with alternating shading up to two
+// levels deep), and lets the user reply with or without a thread-local
+// Ed25519 identity.
 
 import { api, PostView } from "../lib/api";
 import { $, clear, el, meta, text } from "../lib/dom";
@@ -17,6 +19,8 @@ const replyForm = $<HTMLFormElement>("#reply-form");
 const replyStatus = $<HTMLParagraphElement>("#reply-status");
 const claim = $<HTMLInputElement>("#claim-identity");
 const forgetBtn = $<HTMLButtonElement>("#forget-identity");
+
+const MAX_DEPTH = 2;
 
 claim.checked = tkey.hasKeypair(threadIdB64);
 updateForgetVisibility();
@@ -78,15 +82,103 @@ function render(posts: PostView[]): void {
     postsEl.appendChild(el("p", { class: "muted" }, ["No posts yet."]));
     return;
   }
-  for (const p of posts) {
-    postsEl.appendChild(renderPost(p));
+  const labels = assignLabels(posts);
+  const childrenOf = buildTree(posts);
+
+  // OP card (always at the top, regardless of children).
+  const op = posts.find((p) => p.seq === 1);
+  if (op) {
+    postsEl.appendChild(renderPost(op, labels, 0, /* isOp */ true));
+  }
+
+  // Direct replies to OP first, then DFS down to MAX_DEPTH.
+  const opChildren = childrenOf.get(1) ?? [];
+  for (const seq of opChildren) {
+    renderSubtree(posts, childrenOf, labels, seq, 0);
   }
   scrollToHashTarget();
 }
 
-function renderPost(p: PostView): HTMLElement {
-  const isOp = p.seq === 1;
-  const article = el("article", { class: isOp ? "post op" : "post" });
+function renderSubtree(
+  posts: PostView[],
+  childrenOf: Map<number, number[]>,
+  labels: Map<number, string>,
+  seq: number,
+  depth: number,
+): void {
+  const post = posts.find((p) => p.seq === seq);
+  if (!post) return;
+  postsEl.appendChild(renderPost(post, labels, depth, /* isOp */ false));
+  const cs = childrenOf.get(seq) ?? [];
+  for (const child of cs) {
+    renderSubtree(posts, childrenOf, labels, child, Math.min(depth + 1, MAX_DEPTH));
+  }
+}
+
+/// Builds the parent → children map. A post's parent is the first
+/// `>>N` in its body where N refers to an existing earlier post.
+/// Posts with no usable >>N reference are children of OP (#1).
+function buildTree(posts: PostView[]): Map<number, number[]> {
+  const seqs = new Set(posts.map((p) => p.seq));
+  const childrenOf = new Map<number, number[]>();
+  for (const p of posts) {
+    if (p.seq === 1) continue;
+    const m = />>(\d+)/.exec(p.body);
+    let parent = 1;
+    if (m) {
+      const n = parseInt(m[1], 10);
+      if (n !== p.seq && n < p.seq && seqs.has(n)) parent = n;
+    }
+    const arr = childrenOf.get(parent) ?? [];
+    arr.push(p.seq);
+    childrenOf.set(parent, arr);
+  }
+  return childrenOf;
+}
+
+/// Assigns display names. OP (post #1) is "OP". Any subsequent post
+/// signed with the same key as OP is also "OP". Other posts get
+/// "Anon N" — same key gets the same label, unsigned posts each get a
+/// fresh number (because we have no continuity for them).
+function assignLabels(posts: PostView[]): Map<number, string> {
+  const labels = new Map<number, string>();
+  const op = posts.find((p) => p.seq === 1);
+  const opPubkey = op?.pubkey ?? null;
+  labels.set(1, "OP");
+  let nextAnon = 1;
+  const keyToLabel = new Map<string, string>();
+  for (const p of posts) {
+    if (p.seq === 1) continue;
+    if (opPubkey && p.pubkey === opPubkey) {
+      labels.set(p.seq, "OP");
+      continue;
+    }
+    if (p.pubkey) {
+      const existing = keyToLabel.get(p.pubkey);
+      if (existing) {
+        labels.set(p.seq, existing);
+        continue;
+      }
+      const label = `Anon ${nextAnon++}`;
+      keyToLabel.set(p.pubkey, label);
+      labels.set(p.seq, label);
+    } else {
+      labels.set(p.seq, `Anon ${nextAnon++}`);
+    }
+  }
+  return labels;
+}
+
+function renderPost(
+  p: PostView,
+  labels: Map<number, string>,
+  depth: number,
+  isOp: boolean,
+): HTMLElement {
+  const cls =
+    (isOp ? "post op" : `post comment depth-${depth}`) +
+    ` ${depth % 2 === 0 ? "shade-a" : "shade-b"}`;
+  const article = el("article", { class: cls });
   article.id = `p${p.seq}`;
 
   const seqLink = el("a", {}, [`#${p.seq}`]) as HTMLAnchorElement;
@@ -109,13 +201,9 @@ function renderPost(p: PostView): HTMLElement {
     `${humanAgo(created)} ago`,
   ]);
 
-  const identity = p.pubkey
-    ? p.signer_first_seq && p.signer_first_seq !== p.seq
-      ? `same anon as #${p.signer_first_seq}`
-      : "same anon (first signed post)"
-    : "anonymous";
+  const author = el("span", { class: "author" }, [labels.get(p.seq) ?? "?"]);
 
-  const replyBtn = el("button", { type: "button", class: "reply-btn" }, [`Reply to #${p.seq}`]);
+  const replyBtn = el("button", { type: "button", class: "reply-btn" }, ["Reply"]);
   replyBtn.addEventListener("click", () => {
     const ta = document.querySelector<HTMLTextAreaElement>("#reply-form textarea");
     if (!ta) return;
@@ -127,7 +215,7 @@ function renderPost(p: PostView): HTMLElement {
   });
 
   const meta_ = el("div", { class: "meta" }, [
-    seqLink, " · ", ts, " · ", identity, " · ", replyBtn,
+    author, " · ", seqLink, " · ", ts, " · ", replyBtn,
   ]);
   const body = el("div", { class: "body" }, renderBody(p.body));
 
@@ -136,10 +224,7 @@ function renderPost(p: PostView): HTMLElement {
   return article;
 }
 
-/// Splits a post body into text nodes and `>>N` link elements. Inline
-/// matches like ">>123" become `<a href="#p123">>>123</a>`. Out-of-range
-/// references aren't validated here — the link just won't scroll
-/// anywhere.
+/// Splits a post body into text nodes and `>>N` link elements.
 function renderBody(text: string): Array<Node | string> {
   const out: Array<Node | string> = [];
   const re = />>(\d+)/g;
