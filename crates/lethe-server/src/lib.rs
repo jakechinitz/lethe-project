@@ -3,8 +3,9 @@
 //!
 //! Layering rules (see plan):
 //!   routes/  → logic/  → db/  + crypto.rs
+//!   federation/ sits at the same level as logic/; never imports routes/.
 //! No reverse imports. No SQL outside db/. No `ed25519_dalek` outside
-//! crypto.rs.
+//! crypto.rs and federation/identity.rs.
 
 #![forbid(unsafe_code)]
 
@@ -13,6 +14,7 @@ pub mod crypto;
 pub mod csp;
 pub mod db;
 pub mod error;
+pub mod federation;
 pub mod ids;
 pub mod logic;
 pub mod moderation;
@@ -30,6 +32,7 @@ use config::Config;
 use sqlx::PgPool;
 use state::AppState;
 use std::net::SocketAddr;
+use std::sync::Arc;
 use tower::limit::ConcurrencyLimitLayer;
 use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::set_header::SetResponseHeaderLayer;
@@ -72,7 +75,20 @@ pub fn router(state: AppState) -> Router {
             post(routes::rooms::list_messages),
         )
         .route("/rooms/:room_id/remove", post(routes::rooms::remove))
-        .route("/rooms/:room_id/leave", post(routes::rooms::leave));
+        .route("/rooms/:room_id/leave", post(routes::rooms::leave))
+        .route(
+            "/federation/events",
+            get(federation::route::events),
+        )
+        .route("/federation/info", get(federation::route::info))
+        .route(
+            "/federation/peers",
+            get(federation::route::list_peers).post(federation::route::add_peer),
+        )
+        .route(
+            "/federation/peers/disable",
+            post(federation::route::set_peer_enabled),
+        );
 
     let pages = Router::new()
         .route("/", get(routes::pages::index))
@@ -111,17 +127,41 @@ pub fn router(state: AppState) -> Router {
 
 pub async fn build_state(cfg: Config) -> Result<AppState, sqlx::Error> {
     let db: PgPool = db::connect(&cfg.database_url).await?;
+    let identity = Arc::new(federation::Identity::load_or_create(&db).await?);
     Ok(AppState {
         db,
         cfg,
         classifier: std::sync::Arc::new(moderation::classifier::NoopClassifier),
+        identity: Some(identity),
     })
 }
 
 pub async fn run(cfg: Config) -> Result<(), Box<dyn std::error::Error>> {
     let bind: SocketAddr = cfg.bind_addr;
     let state = build_state(cfg).await?;
+    let identity = state.identity.clone();
+    if let Some(id) = &identity {
+        use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+        tracing::info!(
+            server_pubkey = %URL_SAFE_NO_PAD.encode(id.pubkey()),
+            "lethe-server identity loaded",
+        );
+    }
     spawn_retention_worker(state.db.clone(), std::time::Duration::from_secs(3600));
+    if state.cfg.federation_enabled {
+        if let Some(id) = identity.clone() {
+            federation::pull::spawn(
+                state.db.clone(),
+                id,
+                state.classifier.clone(),
+                state.cfg.pull_interval,
+            );
+            tracing::info!(
+                interval_secs = state.cfg.pull_interval.as_secs(),
+                "federation pull worker spawned",
+            );
+        }
+    }
     let app = router(state);
     let listener = tokio::net::TcpListener::bind(bind).await?;
     tracing::info!(%bind, "lethe-server listening");

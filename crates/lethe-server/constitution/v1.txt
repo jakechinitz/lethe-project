@@ -1,0 +1,75 @@
+Lethe constitution v1
+=====================
+
+This text is the moderation floor every Lethe server in the federation
+agrees to enforce. A server may locally enforce stricter rules. A server
+that goes looser is defederated by its peers.
+
+Versioning
+----------
+Bumping the constitution means a new file (v1.1.txt, v2.txt, ...) with
+its own SHA-256 hash. Servers commit to a specific version on the wire
+in their /api/federation/info response and in every federated event.
+
+What is prohibited
+------------------
+1. Spam: duplicate-body floods, link-density spam, posts that exist only
+   to drive traffic to an off-site location with no other content.
+
+2. Malware and credential phishing: links whose destination is hosting
+   malware, browser-resident exploits, or credential phishing. Origin
+   servers are expected to take down such content on report and issue
+   global removals so peers can drop it.
+
+3. Targeted hate speech and slurs against protected classes. The intent
+   is to follow the John Stuart Mill grounding principle the project
+   ships under: speech is harmful when it crosses into direct attack on
+   a person or class, not when it is merely strong language. Profanity
+   on its own is not prohibited.
+
+4. Targeted harassment of an identifiable person, including incitement
+   directed at that person, threats of violence, and coordinated
+   pile-ons.
+
+5. Doxxing: publishing personally-identifying information (legal name,
+   home address, employer, phone, email, biometrics) of a non-public
+   person without their consent.
+
+6. Sexual content involving minors. No exceptions, no "ironic" variants.
+
+7. Direct incitement to imminent unlawful violence against an
+   identifiable target.
+
+What is NOT prohibited at the federation floor
+----------------------------------------------
+- Strong language, profanity, anger, sarcasm, satire, criticism of
+  public figures and institutions.
+- Discussions of substances, gambling, sex work, suicide and self-harm
+  (in the harm-reduction sense), and other gray-area topics. Individual
+  operators may choose to be stricter; the federation floor does not
+  require them to be.
+- Anonymous publication. Lethe has no accounts, no user identities, no
+  durable handles by design.
+
+How enforcement works
+---------------------
+- A server's local moderation pipeline runs at write time and again at
+  federation ingest. Stricter operators drop posts looser peers
+  accepted; that is the enforcement mechanism for "stricter is allowed,
+  looser is not."
+- The origin server of a post is the only authority that can issue a
+  global removal of that post. Peers verify the removal signature
+  against the origin server's pubkey before applying it locally.
+- Operators choose their peers manually. Defederation = removing or
+  disabling a peer. Already-replicated content stays unless the
+  operator separately removes it.
+
+What this document is not
+-------------------------
+- Not a terms of service. There are no user accounts to terminate.
+- Not a court. There is no appeal process. The ultimate remedy is
+  defederation.
+- Not author-controlled. Once a constitution version is hashed, the
+  text is frozen. Changing the moderation floor means a new version
+  with a new hash, and operators choosing whether to peer with servers
+  that have moved.

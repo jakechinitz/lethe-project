@@ -12,6 +12,9 @@ pub struct NewPost<'a> {
     pub pubkey: Option<&'a [u8]>,
     pub signature: Option<&'a [u8]>,
     pub created_at: Date,
+    /// 32-byte Ed25519 pubkey of this server. Federated copies will
+    /// carry this same value back when they're pulled by peers.
+    pub origin_server_id: &'a [u8],
 }
 
 pub struct Inserted {
@@ -19,19 +22,25 @@ pub struct Inserted {
     pub seq: i32,
 }
 
-/// Inserts a post, bumps the parent thread's activity counters, and
-/// returns the assigned sequence number. Both writes happen in one
-/// transaction so the feed's `last_post_at` index never observes a stale
-/// state where a post exists but the thread hasn't been updated yet.
+/// Inserts a locally-authored post, bumps the parent thread's activity
+/// counters, and returns the assigned sequence number. Both writes
+/// happen in one transaction so the feed's `last_post_at` index never
+/// observes a stale state.
+///
+/// `origin_post_id` is set equal to the freshly-minted local id, so a
+/// peer that pulls this post and dedupes on `(origin_server_id,
+/// origin_post_id)` is comparing against the same value the origin
+/// server used as its primary key.
 pub async fn insert(db: &PgPool, p: NewPost<'_>) -> Result<Inserted, sqlx::Error> {
     let post_id = ids::new_id();
     let mut tx = db.begin().await?;
     let row: (i32,) = sqlx::query_as(
-        "INSERT INTO posts (id, thread_id, seq, body, pow_nonce, pubkey, signature, created_at)
+        "INSERT INTO posts (id, thread_id, seq, body, pow_nonce, pubkey, signature,
+                            created_at, origin_server_id, origin_post_id)
          VALUES (
              $1, $2,
              COALESCE((SELECT MAX(seq) FROM posts WHERE thread_id = $2), 0) + 1,
-             $3, $4, $5, $6, $7
+             $3, $4, $5, $6, $7, $8, $1
          )
          RETURNING seq",
     )
@@ -42,6 +51,7 @@ pub async fn insert(db: &PgPool, p: NewPost<'_>) -> Result<Inserted, sqlx::Error
     .bind(p.pubkey)
     .bind(p.signature)
     .bind(p.created_at)
+    .bind(p.origin_server_id)
     .fetch_one(&mut *tx)
     .await?;
     sqlx::query(
@@ -56,6 +66,79 @@ pub async fn insert(db: &PgPool, p: NewPost<'_>) -> Result<Inserted, sqlx::Error
     .await?;
     tx.commit().await?;
     Ok(Inserted { post_id, seq: row.0 })
+}
+
+pub struct FederatedPost<'a> {
+    pub thread_id: &'a [u8],
+    pub body: &'a str,
+    pub pubkey: Option<&'a [u8]>,
+    pub signature: Option<&'a [u8]>,
+    pub created_at: Date,
+    pub origin_server_id: &'a [u8],
+    pub origin_post_id: &'a [u8],
+}
+
+/// Inserts a federated post pulled from a peer. Differences from the
+/// local insert: no `pow_nonce` (PoW is meaningless for relayed
+/// content), and the seq is computed against whatever rows already
+/// exist in the local thread. Idempotent on
+/// `(origin_server_id, origin_post_id)` — a duplicate pull is a no-op.
+///
+/// Caller is responsible for ensuring the thread row exists first
+/// (see `db::threads::ensure_for_federation`).
+pub async fn insert_federated(
+    db: &PgPool,
+    p: FederatedPost<'_>,
+) -> Result<Option<Inserted>, sqlx::Error> {
+    let local_id = ids::new_id();
+    let mut tx = db.begin().await?;
+    let row: Option<(Vec<u8>, i32)> = sqlx::query_as(
+        "INSERT INTO posts (id, thread_id, seq, body, pow_nonce, pubkey, signature,
+                            created_at, origin_server_id, origin_post_id)
+         VALUES (
+             $1, $2,
+             COALESCE((SELECT MAX(seq) FROM posts WHERE thread_id = $2), 0) + 1,
+             $3, $4, $5, $6, $7, $8, $9
+         )
+         ON CONFLICT (origin_server_id, origin_post_id)
+             WHERE origin_server_id IS NOT NULL AND origin_post_id IS NOT NULL
+             DO NOTHING
+         RETURNING id, seq",
+    )
+    .bind(&local_id[..])
+    .bind(p.thread_id)
+    .bind(p.body)
+    .bind(&[] as &[u8])
+    .bind(p.pubkey)
+    .bind(p.signature)
+    .bind(p.created_at)
+    .bind(p.origin_server_id)
+    .bind(p.origin_post_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+
+    match row {
+        None => {
+            tx.rollback().await?;
+            Ok(None)
+        }
+        Some((id_bytes, seq)) => {
+            sqlx::query(
+                "UPDATE threads
+                 SET last_post_at = GREATEST(last_post_at, $2),
+                     post_count = post_count + 1
+                 WHERE id = $1",
+            )
+            .bind(p.thread_id)
+            .bind(p.created_at)
+            .execute(&mut *tx)
+            .await?;
+            tx.commit().await?;
+            let mut id = [0u8; 16];
+            id.copy_from_slice(&id_bytes);
+            Ok(Some(Inserted { post_id: id, seq }))
+        }
+    }
 }
 
 /// Earliest `seq` in this thread that the given pubkey signed; `None` if
@@ -102,6 +185,13 @@ pub async fn exists(db: &PgPool, post_id: &[u8]) -> Result<bool, sqlx::Error> {
     Ok(row.is_some())
 }
 
+/// Body shown in place of a removed post. The shape stays parsable so
+/// clients don't need to special-case removed posts; the prefix is
+/// stable enough for a future UI to detect.
+pub fn tombstone_body(reason: &str) -> String {
+    format!("[removed: {reason}]")
+}
+
 #[derive(sqlx::FromRow)]
 struct PostRow {
     id: Vec<u8>,
@@ -109,6 +199,7 @@ struct PostRow {
     body: String,
     created_at: Date,
     pubkey: Option<Vec<u8>>,
+    removal_reason: Option<String>,
 }
 
 pub async fn list_in_thread(
@@ -118,10 +209,11 @@ pub async fn list_in_thread(
     limit: i64,
 ) -> Result<Vec<PostView>, sqlx::Error> {
     let rows: Vec<PostRow> = sqlx::query_as(
-        "SELECT id, seq, body, created_at, pubkey
-         FROM posts
-         WHERE thread_id = $1 AND seq > $2
-         ORDER BY seq ASC
+        "SELECT p.id, p.seq, p.body, p.created_at, p.pubkey, pr.reason AS removal_reason
+         FROM posts p
+         LEFT JOIN post_removals pr ON pr.post_id = p.id
+         WHERE p.thread_id = $1 AND p.seq > $2
+         ORDER BY p.seq ASC
          LIMIT $3",
     )
     .bind(thread_id)
@@ -132,16 +224,22 @@ pub async fn list_in_thread(
 
     let mut out = Vec::with_capacity(rows.len());
     for r in rows {
-        let signer_first_seq = match &r.pubkey {
+        let removed = r.removal_reason.is_some();
+        let body = match &r.removal_reason {
+            Some(reason) => tombstone_body(reason),
+            None => r.body,
+        };
+        let pubkey = if removed { None } else { r.pubkey };
+        let signer_first_seq = match &pubkey {
             Some(pk) => signer_first_seq(db, thread_id, pk).await?,
             None => None,
         };
         out.push(PostView {
             post_id: ids::b64(&r.id),
             seq: r.seq,
-            body: r.body,
+            body,
             created_at: CoarseDate(r.created_at),
-            pubkey: r.pubkey.as_ref().map(|p| ids::b64(p)),
+            pubkey: pubkey.as_ref().map(|p| ids::b64(p)),
             signer_first_seq,
         });
     }
