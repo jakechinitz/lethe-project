@@ -37,40 +37,29 @@ export function el<K extends keyof HTMLElementTagNameMap>(
   return node;
 }
 
-export function durationSince(iso: string): string {
-  const then = new Date(iso).getTime();
-  const now = Date.now();
-  const seconds = Math.max(0, Math.round((now - then) / 1000));
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.round(seconds / 60);
-  if (minutes < 60) return `${minutes}m`;
-  const hours = Math.round(minutes / 60);
-  if (hours < 48) return `${hours}h`;
-  const days = Math.round(hours / 24);
-  return `${days}d`;
-}
-
-/// Renders an ISO timestamp as a date+time the user can read at a glance:
-///   - within today       → "2:23 PM"
-///   - within this year   → "Aug 15, 2:23 PM"
-///   - older              → "Aug 15, 2024, 2:23 PM"
-/// Always uses the visitor's local timezone.
-export function formatPostTimestamp(iso: string): string {
-  const d = new Date(iso);
+/// Renders an ISO-8601 date ("YYYY-MM-DD") at day granularity:
+///   - today                → "Today"
+///   - yesterday            → "Yesterday"
+///   - earlier this year    → "Aug 15"
+///   - older                → "Aug 15, 2024"
+/// Always rendered in the visitor's local locale, no timezone conversion
+/// (the input is a calendar date, not an instant).
+export function formatPostTimestamp(date_iso: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(date_iso);
+  if (!m) return date_iso;
+  const year = parseInt(m[1], 10);
+  const month = parseInt(m[2], 10);
+  const day = parseInt(m[3], 10);
+  const d = new Date(year, month - 1, day);
   const now = new Date();
-  const sameDay =
-    d.getFullYear() === now.getFullYear() &&
-    d.getMonth() === now.getMonth() &&
-    d.getDate() === now.getDate();
-  if (sameDay) {
-    return d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
-  }
-  const sameYear = d.getFullYear() === now.getFullYear();
-  return d.toLocaleString(undefined, {
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const diffDays = Math.round((today.getTime() - d.getTime()) / 86_400_000);
+  if (diffDays === 0) return "Today";
+  if (diffDays === 1) return "Yesterday";
+  const sameYear = year === now.getFullYear();
+  return d.toLocaleDateString(undefined, {
     month: "short",
     day: "numeric",
     ...(sameYear ? {} : { year: "numeric" }),
-    hour: "numeric",
-    minute: "2-digit",
   });
 }

@@ -1,6 +1,6 @@
 //! Front-page feed DTOs.
 
-use crate::{B64, CoarseTime};
+use crate::{B64, CoarseDate};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -18,8 +18,8 @@ pub struct FeedItem {
     pub thread_id: B64,
     pub board_id: String,
     pub title: String,
-    pub created_at: CoarseTime,
-    pub last_post_at: CoarseTime,
+    pub created_at: CoarseDate,
+    pub last_post_at: CoarseDate,
     pub post_count: i32,
 }
 

@@ -2,6 +2,11 @@
 //! older than each board / room's configured retention_days.
 //!
 //! Returns counts only; never logs which rows were deleted.
+//!
+//! Cutoff is `current_date - retention_days`: the comparison is exact at
+//! day granularity, matching the DATE columns it filters on. A row from
+//! yesterday with `retention_days = 0` is deleted; one from today is
+//! kept.
 
 use sqlx::PgPool;
 use time::Duration;
@@ -20,8 +25,8 @@ pub async fn run_once(db: &PgPool) -> Result<RetentionStats, sqlx::Error> {
     let res = sqlx::query(
         "DELETE FROM threads
          WHERE created_at <
-            now() - (
-                SELECT (retention_days || ' days')::interval
+            current_date - (
+                SELECT retention_days
                   FROM boards WHERE id = threads.board_id
             )",
     )
@@ -33,8 +38,8 @@ pub async fn run_once(db: &PgPool) -> Result<RetentionStats, sqlx::Error> {
     let res = sqlx::query(
         "DELETE FROM room_messages
          WHERE created_at <
-            now() - (
-                SELECT (message_retention_days || ' days')::interval
+            current_date - (
+                SELECT message_retention_days
                   FROM rooms WHERE id = room_messages.room_id
             )",
     )

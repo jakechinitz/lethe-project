@@ -1,9 +1,9 @@
 //! Room reads/writes. The server stores opaque ciphertext only.
 
 use crate::ids;
-use lethe_types::{rooms::*, CoarseTime};
+use lethe_types::{rooms::*, CoarseDate};
 use sqlx::PgPool;
-use time::OffsetDateTime;
+use time::Date;
 
 pub struct NewRoom<'a> {
     pub origin_thread: Option<&'a [u8]>,
@@ -13,7 +13,7 @@ pub struct NewRoom<'a> {
     pub wrapped_key_for_creator: &'a [u8],
     pub creator_thread_pubkey: Option<&'a [u8]>,
     pub provenance_sig: Option<&'a [u8]>,
-    pub created_at: OffsetDateTime,
+    pub created_at: Date,
     /// Optional invitee allowlist. `None` = open, `Some(vec)` = restricted.
     pub allowlist_thread_pubkeys: Option<&'a [Vec<u8>]>,
 }
@@ -21,7 +21,7 @@ pub struct NewRoom<'a> {
 /// Inserts a `rooms` row plus the creator's `room_members` row in one
 /// transaction.
 pub async fn create(db: &PgPool, r: NewRoom<'_>) -> Result<[u8; 16], sqlx::Error> {
-    let room_id = ids::new_ulid();
+    let room_id = ids::new_id();
     let mut tx = db.begin().await?;
     sqlx::query(
         "INSERT INTO rooms
@@ -62,7 +62,7 @@ pub struct RoomMeta {
     pub origin_thread: Option<Vec<u8>>,
     pub creator_thread_pubkey: Option<Vec<u8>>,
     pub provenance_sig: Option<Vec<u8>>,
-    pub created_at: OffsetDateTime,
+    pub created_at: Date,
     pub allowlist_thread_pubkeys: Option<Vec<Vec<u8>>>,
 }
 
@@ -71,7 +71,7 @@ type RoomMetaTuple = (
     Option<Vec<u8>>,
     Option<Vec<u8>>,
     Option<Vec<u8>>,
-    OffsetDateTime,
+    Date,
     Option<Vec<Vec<u8>>>,
 );
 
@@ -116,7 +116,7 @@ pub async fn add_member(
     room_id: &[u8],
     box_pubkey: &[u8],
     sig_pubkey: &[u8],
-    joined_at: OffsetDateTime,
+    joined_at: Date,
 ) -> Result<(), sqlx::Error> {
     sqlx::query(
         "INSERT INTO room_members
@@ -139,7 +139,7 @@ pub async fn soft_remove_by_sig(
     db: &PgPool,
     room_id: &[u8],
     sig_pubkey: &[u8],
-    now: OffsetDateTime,
+    now: Date,
 ) -> Result<bool, sqlx::Error> {
     let res = sqlx::query(
         "UPDATE room_members
@@ -248,8 +248,8 @@ pub async fn joined_at_for_sig_member(
     db: &PgPool,
     room_id: &[u8],
     sig_pubkey: &[u8],
-) -> Result<Option<OffsetDateTime>, sqlx::Error> {
-    let row: Option<(OffsetDateTime,)> = sqlx::query_as(
+) -> Result<Option<Date>, sqlx::Error> {
+    let row: Option<(Date,)> = sqlx::query_as(
         "SELECT joined_at FROM room_members
          WHERE room_id = $1
            AND member_sig_pubkey = $2
@@ -285,9 +285,9 @@ struct MemberRow {
     member_box_pubkey: Vec<u8>,
     member_sig_pubkey: Vec<u8>,
     wrapped_key: Option<Vec<u8>>,
-    joined_at: OffsetDateTime,
+    joined_at: Date,
     invited_by_box_pubkey: Option<Vec<u8>>,
-    removed_at: Option<OffsetDateTime>,
+    removed_at: Option<Date>,
 }
 
 pub async fn list_members(db: &PgPool, room_id: &[u8]) -> Result<Vec<MemberView>, sqlx::Error> {
@@ -307,9 +307,9 @@ pub async fn list_members(db: &PgPool, room_id: &[u8]) -> Result<Vec<MemberView>
             box_pubkey: ids::b64(&r.member_box_pubkey),
             sig_pubkey: ids::b64(&r.member_sig_pubkey),
             wrapped_key: r.wrapped_key.as_ref().map(|k| ids::b64(k)),
-            joined_at: CoarseTime(r.joined_at),
+            joined_at: CoarseDate(r.joined_at),
             invited_by_box_pubkey: r.invited_by_box_pubkey.as_ref().map(|k| ids::b64(k)),
-            removed_at: r.removed_at.map(CoarseTime),
+            removed_at: r.removed_at.map(CoarseDate),
         })
         .collect())
 }
@@ -336,7 +336,7 @@ pub async fn remove_and_rekey(
     room_id: &[u8],
     target_box_pubkey: &[u8],
     wraps: &[(Vec<u8>, Vec<u8>)],
-    now: OffsetDateTime,
+    now: Date,
 ) -> Result<i32, sqlx::Error> {
     let mut tx = db.begin().await?;
 
@@ -418,11 +418,11 @@ pub struct NewMessage<'a> {
     pub nonce: &'a [u8],
     pub ciphertext: &'a [u8],
     pub sender_sig: &'a [u8],
-    pub created_at: OffsetDateTime,
+    pub created_at: Date,
 }
 
 pub async fn insert_message(db: &PgPool, m: NewMessage<'_>) -> Result<[u8; 16], sqlx::Error> {
-    let id = ids::new_ulid();
+    let id = ids::new_id();
     sqlx::query(
         "INSERT INTO room_messages
             (id, room_id, sender_sig_pubkey, nonce, ciphertext, sender_sig, created_at)
@@ -443,29 +443,32 @@ pub async fn insert_message(db: &PgPool, m: NewMessage<'_>) -> Result<[u8; 16], 
 #[derive(sqlx::FromRow)]
 struct MessageRow {
     id: Vec<u8>,
+    seq: i64,
     sender_sig_pubkey: Vec<u8>,
     nonce: Vec<u8>,
     ciphertext: Vec<u8>,
     sender_sig: Vec<u8>,
-    created_at: OffsetDateTime,
+    created_at: Date,
 }
 
 /// Lists messages visible to a member, applying the history gate
 /// (`created_at >= joined_at`). The caller must have already verified the
-/// requester is a member of this room.
+/// requester is a member of this room. Ordering and the cursor both
+/// use `seq` (monotonic per-room) since `id` is random and `created_at`
+/// is date-only.
 pub async fn list_messages_for_member(
     db: &PgPool,
     room_id: &[u8],
-    member_joined_at: OffsetDateTime,
-    since: Option<&[u8]>,
+    member_joined_at: Date,
+    since_seq: Option<i64>,
     limit: i64,
 ) -> Result<Vec<MessageView>, sqlx::Error> {
-    let rows: Vec<MessageRow> = match since {
+    let rows: Vec<MessageRow> = match since_seq {
         Some(s) => sqlx::query_as(
-            "SELECT id, sender_sig_pubkey, nonce, ciphertext, sender_sig, created_at
+            "SELECT id, seq, sender_sig_pubkey, nonce, ciphertext, sender_sig, created_at
              FROM room_messages
-             WHERE room_id = $1 AND created_at >= $2 AND id > $3
-             ORDER BY id ASC LIMIT $4",
+             WHERE room_id = $1 AND created_at >= $2 AND seq > $3
+             ORDER BY seq ASC LIMIT $4",
         )
         .bind(room_id)
         .bind(member_joined_at)
@@ -474,10 +477,10 @@ pub async fn list_messages_for_member(
         .fetch_all(db)
         .await?,
         None => sqlx::query_as(
-            "SELECT id, sender_sig_pubkey, nonce, ciphertext, sender_sig, created_at
+            "SELECT id, seq, sender_sig_pubkey, nonce, ciphertext, sender_sig, created_at
              FROM room_messages
              WHERE room_id = $1 AND created_at >= $2
-             ORDER BY id ASC LIMIT $3",
+             ORDER BY seq ASC LIMIT $3",
         )
         .bind(room_id)
         .bind(member_joined_at)
@@ -489,11 +492,12 @@ pub async fn list_messages_for_member(
         .into_iter()
         .map(|r| MessageView {
             message_id: ids::b64(&r.id),
+            seq: r.seq,
             sender_sig_pubkey: ids::b64(&r.sender_sig_pubkey),
             nonce: ids::b64(&r.nonce),
             ciphertext: ids::b64(&r.ciphertext),
             sender_sig: ids::b64(&r.sender_sig),
-            created_at: CoarseTime(r.created_at),
+            created_at: CoarseDate(r.created_at),
         })
         .collect())
 }

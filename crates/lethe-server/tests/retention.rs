@@ -19,9 +19,12 @@ async fn deletes_threads_past_retention() {
         .unwrap();
 
     // Insert a thread with an explicitly old created_at, plus a fresh one.
+    // `created_at` is DATE so we step a whole day either side of today —
+    // the cutoff is `current_date - retention_days` and we want the rows
+    // to land on opposite sides of it.
     sqlx::query(
         "INSERT INTO threads (id, board_id, title, created_at)
-         VALUES ($1, 'general', 'old', now() - interval '1 hour')",
+         VALUES ($1, 'general', 'old', current_date - interval '1 day')",
     )
     .bind(&[1u8; 16][..])
     .execute(&s.db)
@@ -29,7 +32,7 @@ async fn deletes_threads_past_retention() {
     .unwrap();
     sqlx::query(
         "INSERT INTO threads (id, board_id, title, created_at)
-         VALUES ($1, 'general', 'fresh', now() + interval '1 hour')",
+         VALUES ($1, 'general', 'fresh', current_date + interval '1 day')",
     )
     .bind(&[2u8; 16][..])
     .execute(&s.db)
@@ -57,7 +60,7 @@ async fn deletes_room_messages_past_retention() {
     let room_id = vec![9u8; 16];
     sqlx::query(
         "INSERT INTO rooms (id, invite_code, created_at, message_retention_days)
-         VALUES ($1, 'inv', now(), 0)",
+         VALUES ($1, 'inv', current_date, 0)",
     )
     .bind(&room_id)
     .execute(&s.db)
@@ -66,7 +69,7 @@ async fn deletes_room_messages_past_retention() {
     sqlx::query(
         "INSERT INTO room_members
             (room_id, member_box_pubkey, member_sig_pubkey, wrapped_key, joined_at)
-         VALUES ($1, $2, $3, $4, now())",
+         VALUES ($1, $2, $3, $4, current_date)",
     )
     .bind(&room_id)
     .bind(&[1u8; 32][..])
@@ -76,15 +79,15 @@ async fn deletes_room_messages_past_retention() {
     .await
     .unwrap();
 
-    // Use explicit timestamps so the fresh row's created_at is strictly
-    // greater than `now()` at DELETE time (now() advances between txs).
-    for (id, offset) in [(b"old", "-1 hour"), (b"new", "+1 hour")].iter() {
+    // `created_at` is DATE — step a full day either side of today so the
+    // fresh row lands strictly after the retention cutoff.
+    for (id, offset) in [(b"old", "-1 day"), (b"new", "+1 day")].iter() {
         let mut id_bytes = vec![0u8; 16];
         id_bytes[..3].copy_from_slice(*id);
         sqlx::query(
             "INSERT INTO room_messages
                 (id, room_id, sender_sig_pubkey, nonce, ciphertext, sender_sig, created_at)
-             VALUES ($1, $2, $3, $4, $5, $6, now() + ($7)::interval)",
+             VALUES ($1, $2, $3, $4, $5, $6, current_date + ($7)::interval)",
         )
         .bind(id_bytes)
         .bind(&room_id)

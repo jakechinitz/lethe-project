@@ -48,7 +48,7 @@ pub async fn create_thread(
             }
             v
         }
-        None => ids::new_ulid().to_vec(),
+        None => ids::new_id().to_vec(),
     };
 
     let (pubkey_bytes, signature_bytes) = match (&req.pubkey, &req.signature) {
@@ -67,7 +67,7 @@ pub async fn create_thread(
         _ => return Err(AppError::BadRequest("pubkey/signature must come together")),
     };
 
-    let now = ltime::now_coarse();
+    let now = ltime::today_utc();
     db::threads::create(db, &thread_id_vec, &req.board_id, &req.title, now)
         .await
         .map_err(|e| match &e {
@@ -148,7 +148,7 @@ pub async fn create_post(
         _ => return Err(AppError::BadRequest("pubkey/signature must come together")),
     };
 
-    let now = ltime::now_coarse();
+    let now = ltime::today_utc();
     let inserted = db::posts::insert(
         db,
         db::posts::NewPost {

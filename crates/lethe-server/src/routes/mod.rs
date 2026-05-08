@@ -5,5 +5,6 @@ pub mod boards;
 pub mod feed;
 pub mod pages;
 pub mod posts;
+pub mod reports;
 pub mod rooms;
 pub mod threads;

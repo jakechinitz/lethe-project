@@ -1,6 +1,6 @@
 //! Public-board post DTOs: thread creation, replies, listings.
 
-use crate::{B64, CoarseTime};
+use crate::{B64, CoarseDate};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -60,7 +60,7 @@ pub struct PostView {
     pub post_id: B64,
     pub seq: i32,
     pub body: String,
-    pub created_at: CoarseTime,
+    pub created_at: CoarseDate,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pubkey: Option<B64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -75,4 +75,21 @@ pub fn canonical_post_payload(thread_id: &[u8], body: &str) -> Vec<u8> {
     buf.extend_from_slice(thread_id);
     buf.extend_from_slice(body.as_bytes());
     buf
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReportPostReq {
+    /// Optional free-text reason from the reporter. Capped at 500 chars
+    /// server-side; empty / missing means "no reason given."
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    /// PoW nonce computed over `post_id || reason_bytes || nonce`. The
+    /// server applies the same difficulty as a regular post so reporting
+    /// isn't a free flood vector.
+    pub pow_nonce: B64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReportPostResp {
+    pub report_id: B64,
 }

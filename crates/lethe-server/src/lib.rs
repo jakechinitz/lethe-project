@@ -53,6 +53,7 @@ pub fn router(state: AppState) -> Router {
             "/threads/:thread_id/posts",
             post(routes::posts::create).get(routes::posts::list),
         )
+        .route("/posts/:post_id/reports", post(routes::reports::create))
         .route("/rooms", post(routes::rooms::create))
         .route(
             "/rooms/by-invite/:code/info",

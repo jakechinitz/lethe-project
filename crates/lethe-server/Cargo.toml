@@ -29,7 +29,6 @@ ed25519-dalek = "2"
 sha2 = "0.10"
 rand = "0.8"
 
-ulid = { workspace = true }
 time = { workspace = true }
 
 base64 = "0.22"

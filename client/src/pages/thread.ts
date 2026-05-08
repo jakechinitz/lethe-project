@@ -196,8 +196,7 @@ function renderPost(
     setTimeout(() => seqLink.classList.remove("copied"), 1200);
   });
 
-  const created = new Date(p.created_at);
-  const ts = el("time", { title: created.toISOString(), dateTime: p.created_at }, [
+  const ts = el("time", { dateTime: p.created_at, title: p.created_at }, [
     formatPostTimestamp(p.created_at),
   ]);
 
@@ -214,14 +213,62 @@ function renderPost(
     ta.setSelectionRange(ta.value.length, ta.value.length);
   });
 
+  const reportBtn = el("button", { type: "button", class: "report-btn" }, ["Report"]);
+  reportBtn.addEventListener("click", () => openReportDialog(article, p.post_id));
+
   const meta_ = el("div", { class: "meta" }, [
-    author, " · ", seqLink, " · ", ts, " · ", replyBtn,
+    author, " · ", seqLink, " · ", ts, " · ", replyBtn, " · ", reportBtn,
   ]);
   const body = el("div", { class: "body" }, renderBody(p.body));
 
   article.appendChild(meta_);
   article.appendChild(body);
   return article;
+}
+
+/// Inline report form. Opens beneath the post, asks for an optional
+/// reason, runs PoW bound to the post id, and submits. No login: a
+/// successful submit is logged anonymously server-side and triaged by
+/// operators directly.
+function openReportDialog(article: HTMLElement, postIdB64: string): void {
+  if (article.querySelector(".report-dialog")) return;
+  const status = el("p", { class: "report-status muted" });
+  const textarea = el("textarea", {
+    name: "reason",
+    rows: 2,
+    placeholder: "Optional: why are you reporting this? (max 500 chars)",
+    maxLength: 500,
+  }) as HTMLTextAreaElement;
+  const submit = el("button", { type: "submit", class: "report-submit" }, ["Submit report"]);
+  const cancel = el("button", { type: "button", class: "report-cancel" }, ["Cancel"]);
+  const dialog = el("form", { class: "report-dialog" }, [
+    textarea,
+    el("div", { class: "report-actions" }, [submit, " ", cancel, " ", status]),
+  ]) as HTMLFormElement;
+  cancel.addEventListener("click", () => dialog.remove());
+  dialog.addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    submit.disabled = true;
+    const reason = textarea.value.trim();
+    text(status, "Computing proof-of-work…");
+    try {
+      const postIdBytes = b64decode(postIdB64);
+      const nonce = await findNonce(postIdBytes, reason, powBits);
+      text(status, "Submitting…");
+      await api.reportPost(postIdB64, {
+        reason: reason ? reason : undefined,
+        pow_nonce: b64encode(nonce),
+      });
+      text(status, "Report submitted. Thank you.");
+      submit.disabled = true;
+      cancel.textContent = "Close";
+    } catch (e) {
+      text(status, `Error: ${(e as Error).message}`);
+      submit.disabled = false;
+    }
+  });
+  article.appendChild(dialog);
+  textarea.focus();
 }
 
 /// Splits a post body into text nodes and `>>N` link elements.

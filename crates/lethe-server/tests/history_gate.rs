@@ -52,12 +52,30 @@ async fn late_joiner_cannot_see_earlier_messages() {
         .await
         .unwrap();
 
-    // Wait so Bob's joined_at is strictly after Alice's message.
-    // Coarsened timestamps round to the minute, so a few seconds is enough
-    // to land in the next bucket; we sleep just over one second and then
-    // ensure the next message is in a later bucket by waiting through the
-    // bucket boundary if needed.
-    tokio::time::sleep(std::time::Duration::from_millis(60_500)).await;
+    // Bob's `joined_at` is the day he joins (DATE granularity). To make
+    // Alice's first message strictly older than Bob's join, backdate
+    // both Alice's joined_at and her message in the database — sleeping
+    // wouldn't help since both rows would land on the same calendar
+    // date. Alice still sees her message because we keep her joined_at
+    // earlier than the message.
+    sqlx::query(
+        "UPDATE room_members
+         SET joined_at = current_date - interval '2 days'
+         WHERE room_id = $1",
+    )
+    .bind(&room_id_bytes[..])
+    .execute(&s.db)
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE room_messages
+         SET created_at = current_date - interval '1 day'
+         WHERE room_id = $1",
+    )
+    .bind(&room_id_bytes[..])
+    .execute(&s.db)
+    .await
+    .unwrap();
 
     // Bob joins.
     let bob = browser::new_member_keys();
@@ -86,8 +104,8 @@ async fn late_joiner_cannot_see_earlier_messages() {
         .await
         .unwrap();
 
-    // Alice posts a new message AFTER Bob joined.
-    tokio::time::sleep(std::time::Duration::from_millis(1_500)).await;
+    // Alice posts a new message AFTER Bob joined. Same-day as Bob's
+    // join, which the gate accepts (`created_at >= joined_at`).
     let visible = "post-Bob message";
     let (n2, ct2) = browser::encrypt_message(visible, &room_id_bytes, &room_key);
     let s2 = browser::sign_message_envelope(&room_id_bytes, &n2, &ct2, &alice.sig_priv);

@@ -1,11 +1,15 @@
 //! Front-page feed: a flat list of threads across boards, optionally
 //! filtered to a single category, sortable by latest activity or by
 //! creation time. Cursor-paginated by `(sort-key, thread_id)`.
+//!
+//! The sort key is a `DATE`, so within a single day the feed orders by
+//! id (and ids are random — see `ids::new_id`). That gives a stable
+//! pagination tie-break without leaking sub-day timing.
 
 use crate::ids;
-use lethe_types::{feed::*, CoarseTime};
+use lethe_types::{feed::*, CoarseDate};
 use sqlx::PgPool;
-use time::OffsetDateTime;
+use time::Date;
 
 /// Boards visible in the front-page feed. The legacy `general` board is
 /// reachable directly via `/b/general` but excluded from the new tabs.
@@ -16,8 +20,8 @@ struct FeedRow {
     id: Vec<u8>,
     board_id: String,
     title: String,
-    created_at: OffsetDateTime,
-    last_post_at: OffsetDateTime,
+    created_at: Date,
+    last_post_at: Date,
     post_count: i32,
 }
 
@@ -27,8 +31,8 @@ impl From<FeedRow> for FeedItem {
             thread_id: ids::b64(&r.id),
             board_id: r.board_id,
             title: r.title,
-            created_at: CoarseTime(r.created_at),
-            last_post_at: CoarseTime(r.last_post_at),
+            created_at: CoarseDate(r.created_at),
+            last_post_at: CoarseDate(r.last_post_at),
             post_count: r.post_count,
         }
     }
@@ -107,6 +111,6 @@ pub async fn list(
 }
 
 pub struct FeedCursor {
-    pub sort_value: OffsetDateTime,
+    pub sort_value: Date,
     pub thread_id: Vec<u8>,
 }

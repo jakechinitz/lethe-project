@@ -1,10 +1,20 @@
-//! ULID generation and urlsafe-base64 helpers used at HTTP boundaries.
+//! 16-byte random ids and urlsafe-base64 helpers used at HTTP boundaries.
+//!
+//! Ids are uniform random — not time-encoded — so a captured id reveals
+//! nothing about when the row was created. Within a thread, posts are
+//! ordered by their per-thread `seq`. In the front-page feed, threads
+//! are ordered by `created_at` / `last_post_at` at DATE granularity with
+//! id as a stable tie-break inside the day.
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+use rand::RngCore as _;
 
-/// 16-byte ULID. Sortable by creation, opaque to clients.
-pub fn new_ulid() -> [u8; 16] {
-    ulid::Ulid::new().to_bytes()
+/// 16 uniform-random bytes. Globally unique with overwhelming
+/// probability; opaque to clients.
+pub fn new_id() -> [u8; 16] {
+    let mut buf = [0u8; 16];
+    rand::thread_rng().fill_bytes(&mut buf);
+    buf
 }
 
 pub fn b64(bytes: &[u8]) -> String {
@@ -24,8 +34,5 @@ pub fn unb64_array<const N: usize>(s: &str) -> Result<[u8; N], &'static str> {
 
 /// Generate a 22-character urlsafe-base64 invite code (16 random bytes).
 pub fn random_invite_code() -> String {
-    use rand::RngCore as _;
-    let mut buf = [0u8; 16];
-    rand::thread_rng().fill_bytes(&mut buf);
-    b64(&buf)
+    b64(&new_id())
 }
