@@ -10,6 +10,7 @@ pub mod feed;
 pub mod moderation;
 pub mod nonces;
 pub mod posts;
+pub mod reports;
 pub mod retention;
 pub mod rooms;
 pub mod threads;

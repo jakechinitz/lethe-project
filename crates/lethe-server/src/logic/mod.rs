@@ -4,5 +4,6 @@
 //! writes. They never see `axum`, `Request`, or `Response`.
 
 pub mod posts;
+pub mod reports;
 pub mod rooms;
 pub mod trust;

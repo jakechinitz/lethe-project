@@ -124,11 +124,36 @@ async fn last_post_at_bumps_on_reply_and_resorts() {
     let s = support::spawn().await;
     let client = reqwest::Client::new();
     let older = create_thread(&client, &s.base_url, s.pow_bits, "economy", "older").await;
-    // Sleep so the next thread lands in a strictly later 60s bucket.
-    tokio::time::sleep(std::time::Duration::from_millis(60_500)).await;
     let newer = create_thread(&client, &s.base_url, s.pow_bits, "economy", "newer").await;
 
-    // Default sort is last_comment, so right now `newer` is on top.
+    // Timestamps are date-only, so we can't separate two same-day rows
+    // by sleeping — we backdate them via SQL onto distinct calendar days
+    // (older -2, newer -1), leaving today free for the reply to bump
+    // `older` ahead of `newer`.
+    let older_id = browser::unb64(&older);
+    let newer_id = browser::unb64(&newer);
+    sqlx::query(
+        "UPDATE threads
+         SET created_at = current_date - 2,
+             last_post_at = current_date - 2
+         WHERE id = $1",
+    )
+    .bind(&older_id)
+    .execute(&s.db)
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE threads
+         SET created_at = current_date - 1,
+             last_post_at = current_date - 1
+         WHERE id = $1",
+    )
+    .bind(&newer_id)
+    .execute(&s.db)
+    .await
+    .unwrap();
+
+    // Default sort is last_comment: `newer` (-1) > `older` (-2).
     let resp: FeedResp = client
         .get(format!("{}/api/feed?cat=economy", s.base_url))
         .send()
@@ -139,8 +164,8 @@ async fn last_post_at_bumps_on_reply_and_resorts() {
         .unwrap();
     assert_eq!(resp.items.first().unwrap().thread_id, newer);
 
-    // Reply on `older` and wait past the bucket; it should now be on top.
-    tokio::time::sleep(std::time::Duration::from_millis(60_500)).await;
+    // Replying on `older` stamps last_post_at = today, which beats both
+    // backdated rows.
     reply(&client, &s.base_url, s.pow_bits, &older, "fresh comment").await;
 
     let resp: FeedResp = client
@@ -153,7 +178,8 @@ async fn last_post_at_bumps_on_reply_and_resorts() {
         .unwrap();
     assert_eq!(resp.items.first().unwrap().thread_id, older);
 
-    // 'newest' sort, however, still puts `newer` first.
+    // 'newest' sort orders by created_at, which the reply doesn't touch:
+    // `newer` (-1) is still ahead of `older` (-2).
     let resp: FeedResp = client
         .get(format!("{}/api/feed?cat=economy&sort=newest", s.base_url))
         .send()

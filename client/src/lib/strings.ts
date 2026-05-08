@@ -8,7 +8,7 @@ export const trust = {
   provenanceVerified: "Provenance verified",
   noProvenance: "No thread provenance",
   invitedBy: (name: string) => `Invited by ${name}`,
-  joinedAgo: (duration: string) => `Joined ${duration} ago`,
+  joinedOn: (formatted: string) => `Joined ${formatted.toLowerCase()}`,
   unverified: "Unverified",
   newMember: "New member",
   newInviter: "New inviter",

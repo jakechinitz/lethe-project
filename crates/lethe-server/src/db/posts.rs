@@ -1,9 +1,9 @@
 //! Post reads/writes. `seq` is per-thread monotonic, assigned on insert.
 
 use crate::ids;
-use lethe_types::{posts::PostView, CoarseTime};
+use lethe_types::{posts::PostView, CoarseDate};
 use sqlx::PgPool;
-use time::OffsetDateTime;
+use time::Date;
 
 pub struct NewPost<'a> {
     pub thread_id: &'a [u8],
@@ -11,7 +11,7 @@ pub struct NewPost<'a> {
     pub pow_nonce: &'a [u8],
     pub pubkey: Option<&'a [u8]>,
     pub signature: Option<&'a [u8]>,
-    pub created_at: OffsetDateTime,
+    pub created_at: Date,
 }
 
 pub struct Inserted {
@@ -24,7 +24,7 @@ pub struct Inserted {
 /// transaction so the feed's `last_post_at` index never observes a stale
 /// state where a post exists but the thread hasn't been updated yet.
 pub async fn insert(db: &PgPool, p: NewPost<'_>) -> Result<Inserted, sqlx::Error> {
-    let post_id = ids::new_ulid();
+    let post_id = ids::new_id();
     let mut tx = db.begin().await?;
     let row: (i32,) = sqlx::query_as(
         "INSERT INTO posts (id, thread_id, seq, body, pow_nonce, pubkey, signature, created_at)
@@ -92,12 +92,22 @@ pub async fn pubkey_signed_in_thread(
     Ok(row.is_some())
 }
 
+/// True iff a post with this id exists. Used to validate report targets
+/// before inserting.
+pub async fn exists(db: &PgPool, post_id: &[u8]) -> Result<bool, sqlx::Error> {
+    let row: Option<(i32,)> = sqlx::query_as("SELECT 1 FROM posts WHERE id = $1")
+        .bind(post_id)
+        .fetch_optional(db)
+        .await?;
+    Ok(row.is_some())
+}
+
 #[derive(sqlx::FromRow)]
 struct PostRow {
     id: Vec<u8>,
     seq: i32,
     body: String,
-    created_at: OffsetDateTime,
+    created_at: Date,
     pubkey: Option<Vec<u8>>,
 }
 
@@ -130,7 +140,7 @@ pub async fn list_in_thread(
             post_id: ids::b64(&r.id),
             seq: r.seq,
             body: r.body,
-            created_at: CoarseTime(r.created_at),
+            created_at: CoarseDate(r.created_at),
             pubkey: r.pubkey.as_ref().map(|p| ids::b64(p)),
             signer_first_seq,
         });

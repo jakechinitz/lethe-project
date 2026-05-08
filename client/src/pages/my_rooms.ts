@@ -5,7 +5,7 @@
 // export/import UI for backing up identities against Tor Browser
 // session resets.
 
-import { $, clear, durationSince, el, text } from "../lib/dom";
+import { $, clear, el, text } from "../lib/dom";
 import * as keyfile from "../lib/keyfile";
 
 interface StoredRoomV2 {
@@ -106,11 +106,6 @@ function renderRow(roomId: string, snap: Snapshot | null): HTMLElement {
 
   return card;
 }
-
-// Touch the import so the unused-imports rule stays happy if the helper
-// gets removed in a refactor; durationSince is intentionally available
-// here for future "last visited" labels.
-void durationSince;
 
 async function onExport(): Promise<void> {
   const entries = keyfile.snapshotEntries();

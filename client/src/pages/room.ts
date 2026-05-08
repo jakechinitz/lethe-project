@@ -4,7 +4,7 @@
 // messages while keeping historical messages decryptable for survivors.
 
 import { api, MemberView, MessageView, ProvenanceView } from "../lib/api";
-import { $, clear, durationSince, el, meta, text } from "../lib/dom";
+import { $, clear, el, formatPostTimestamp, meta, text } from "../lib/dom";
 import { b64decode, b64encode, bytesEqual, fromUtf8 } from "../lib/b64";
 import * as roomkey from "../lib/roomkey";
 import { trust } from "../lib/strings";
@@ -18,7 +18,7 @@ const messagesList = $<HTMLElement>("#messages-list");
 const sendForm = $<HTMLFormElement>("#send-form");
 const sendStatus = $<HTMLParagraphElement>("#send-status");
 
-let lastMessageId: string | undefined;
+let lastMessageSeq: number | undefined;
 let memberCache: MemberView[] = [];
 let amCreator = false;
 let currentEpoch = 0;
@@ -148,7 +148,7 @@ function renderMembers(members: MemberView[]): void {
       : trust.creator;
     card.appendChild(
       el("div", {}, [
-        `${shortId(m.box_pubkey)} · ${inviter} · ${trust.joinedAgo(durationSince(m.joined_at))}`,
+        `${shortId(m.box_pubkey)} · ${inviter} · ${trust.joinedOn(formatPostTimestamp(m.joined_at))}`,
       ]),
     );
 
@@ -273,7 +273,10 @@ async function removeMember(target: MemberView): Promise<void> {
 }
 
 function isNew(joinedAt: string): boolean {
-  return Date.now() - new Date(joinedAt).getTime() < 60 * 60 * 1000;
+  // Date-granularity input: a member counts as "new" if they joined today
+  // (UTC), since that's the finest resolution the server stores.
+  const todayUtc = new Date().toISOString().slice(0, 10);
+  return joinedAt.slice(0, 10) === todayUtc;
 }
 
 function isFlagged(m: MemberView, all: MemberView[]): boolean {
@@ -360,14 +363,14 @@ async function tickMessages(): Promise<void> {
       requester_sig_pubkey: b64encode(fresh.sigPub),
       ts,
       sig: b64encode(sig),
-      since: lastMessageId,
+      since_seq: lastMessageSeq,
     });
   } catch {
     return;
   }
   for (const m of resp.messages) {
     await renderMessage(m, fresh.roomKeys);
-    lastMessageId = m.message_id;
+    lastMessageSeq = m.seq;
   }
 }
 
@@ -403,7 +406,7 @@ async function renderMessage(m: MessageView, roomKeys: Uint8Array[]): Promise<vo
 
   messagesList.appendChild(
     el("div", { class: "msg" }, [
-      el("div", { class: "from" }, [`${fromLabel} · ${durationSince(m.created_at)} ago`]),
+      el("div", { class: "from" }, [`${fromLabel} · ${formatPostTimestamp(m.created_at)}`]),
       el("div", { class: "body" }, [bodyText]),
     ]),
   );

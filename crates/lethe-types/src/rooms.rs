@@ -4,7 +4,7 @@
 //! what crosses the wire — nothing about the symmetric room key, plaintext
 //! messages, or any private key is representable in these types.
 
-use crate::{B64, CoarseTime};
+use crate::{B64, CoarseDate};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -101,14 +101,14 @@ pub struct MemberView {
     /// `None` while the joiner is still pending a key wrap.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wrapped_key: Option<B64>,
-    pub joined_at: CoarseTime,
+    pub joined_at: CoarseDate,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub invited_by_box_pubkey: Option<B64>,
     /// `Some(ts)` if this member has been removed from the room. Removed
     /// members cannot post or list messages but their entry remains for
     /// invite-chain auditability.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub removed_at: Option<CoarseTime>,
+    pub removed_at: Option<CoarseDate>,
 }
 
 /// Body of `POST /api/rooms/:room_id/remove`. The creator removes a
@@ -163,7 +163,7 @@ pub struct ProvenanceResp {
     pub creator_thread_pubkey: Option<B64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provenance_sig: Option<B64>,
-    pub created_at: CoarseTime,
+    pub created_at: CoarseDate,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -177,17 +177,21 @@ pub struct SendMessageReq {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SendMessageResp {
     pub message_id: B64,
-    pub created_at: CoarseTime,
+    pub created_at: CoarseDate,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MessageView {
     pub message_id: B64,
+    /// Per-room monotonic insertion ordinal. Stable across reads and
+    /// the only field clients should use for ordering or cursors —
+    /// `message_id` is uniform random and `created_at` is date-only.
+    pub seq: i64,
     pub sender_sig_pubkey: B64,
     pub nonce: B64,
     pub ciphertext: B64,
     pub sender_sig: B64,
-    pub created_at: CoarseTime,
+    pub created_at: CoarseDate,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -204,8 +208,10 @@ pub struct ListMessagesReq {
     /// Unix timestamp (seconds). Server rejects if more than 60 s skew.
     pub ts: i64,
     pub sig: B64,
+    /// Cursor: the largest `seq` the client already has. The server
+    /// returns messages with `seq > since_seq`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub since: Option<B64>,
+    pub since_seq: Option<i64>,
 }
 
 /// Canonical bytes signed for an authenticated message list request.

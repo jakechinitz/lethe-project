@@ -299,12 +299,35 @@ input[type="checkbox"] {
   outline: 2px solid var(--fg);
   outline-offset: 2px;
 }
-.posts .post .reply-btn {
+.posts .post .reply-btn,
+.posts .post .report-btn {
   font-size: .75rem;
   padding: .12rem .55rem;
   min-height: 0;
   margin: 0;
   border-radius: 0;
+}
+.posts .post .report-dialog {
+  margin-top: .55rem;
+  display: flex;
+  flex-direction: column;
+  gap: .35rem;
+}
+.posts .post .report-dialog textarea {
+  font-family: var(--mono);
+  font-size: .85rem;
+  width: 100%;
+  resize: vertical;
+}
+.posts .post .report-dialog .report-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: .5rem;
+  font-size: .8rem;
+}
+.posts .post .report-dialog .report-status {
+  margin: 0;
 }
 .posts .body .quote {
   display: inline-block;
@@ -746,7 +769,8 @@ select option {
   }
   .tab { white-space: nowrap; padding: .5rem .8rem; }
   /* The reply button stays inline at comment-meta size on mobile too. */
-  .posts .post .reply-btn { width: auto; align-self: auto; }
+  .posts .post .reply-btn,
+  .posts .post .report-btn { width: auto; align-self: auto; }
   .posts .comment.depth-1 { margin-left: .65rem; }
   .posts .comment.depth-2 { margin-left: 1.3rem; }
   .posts .comment { padding: .7rem .75rem; }

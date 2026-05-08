@@ -33,6 +33,11 @@ export const api = {
       `/api/threads/${threadId}/posts?since_seq=${sinceSeq}`,
       { method: "GET" },
     ),
+  reportPost: (postId: string, body: unknown) =>
+    call<{ report_id: string }>(`/api/posts/${postId}/reports`, {
+      method: "POST",
+      body,
+    }),
   createRoom: (body: unknown) =>
     call<{ room_id: string; invite_code: string }>("/api/rooms", { method: "POST", body }),
   inviteInfo: (inviteCode: string) =>
@@ -99,6 +104,7 @@ export interface ProvenanceView {
 
 export interface MessageView {
   message_id: string;
+  seq: number;
   sender_sig_pubkey: string;
   nonce: string;
   ciphertext: string;

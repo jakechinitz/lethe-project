@@ -2,7 +2,7 @@
 
 use crate::ids;
 use sqlx::PgPool;
-use time::OffsetDateTime;
+use time::Date;
 
 pub async fn insert(
     db: &PgPool,
@@ -10,7 +10,7 @@ pub async fn insert(
     body_hash: &[u8],
     reason: &str,
 ) -> Result<(), sqlx::Error> {
-    let id = ids::new_ulid();
+    let id = ids::new_id();
     sqlx::query(
         "INSERT INTO moderation_actions (id, board_id, body_hash, reason)
          VALUES ($1, $2, $3, $4)",
@@ -30,15 +30,15 @@ pub struct LogEntry {
     pub board_id: Option<String>,
     pub body_hash: Vec<u8>,
     pub reason: String,
-    pub decided_at: OffsetDateTime,
+    pub decided_at: Date,
 }
 
-type LogTuple = (Vec<u8>, Option<String>, Vec<u8>, String, OffsetDateTime);
+type LogTuple = (Vec<u8>, Option<String>, Vec<u8>, String, Date);
 
 pub async fn list_recent(
     db: &PgPool,
     limit: i64,
-    cursor: Option<(OffsetDateTime, Vec<u8>)>,
+    cursor: Option<(Date, Vec<u8>)>,
 ) -> Result<Vec<LogEntry>, sqlx::Error> {
     let rows: Vec<LogTuple> = match cursor {
         None => sqlx::query_as(

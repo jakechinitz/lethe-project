@@ -193,6 +193,7 @@ struct ModerationEntry {
 
 pub async fn moderation_log(State(state): State<AppState>) -> AppResult<Response> {
     let rows = crate::db::moderation::list_recent(&state.db, 200, None).await?;
+    let date_fmt = time::macros::format_description!("[year]-[month]-[day]");
     let entries = rows
         .into_iter()
         .map(|r| ModerationEntry {
@@ -200,10 +201,7 @@ pub async fn moderation_log(State(state): State<AppState>) -> AppResult<Response
             board_id: r.board_id.unwrap_or_else(|| "—".into()),
             body_hash_short: ids::b64(&r.body_hash)[..12].to_string(),
             reason: r.reason,
-            decided_at: r
-                .decided_at
-                .format(&time::format_description::well_known::Rfc3339)
-                .unwrap_or_default(),
+            decided_at: r.decided_at.format(date_fmt).unwrap_or_default(),
         })
         .collect();
     Ok(ModerationPage { entries }.into_response())

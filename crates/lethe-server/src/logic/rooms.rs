@@ -50,7 +50,7 @@ pub async fn create(db: &PgPool, req: CreateRoomReq) -> AppResult<CreateRoomResp
     // `provenance_sig` must come together and require `origin_thread`.
     // `origin_thread` alone is allowed (used by the invitee allowlist
     // flow to pin a thread without attaching a provenance attestation).
-    let now = ltime::now_coarse();
+    let now = ltime::today_utc();
     let (origin_for_db, creator_pk_for_db, sig_for_db) = match (
         &origin_thread,
         &creator_thread_pubkey,
@@ -182,7 +182,7 @@ pub async fn join(
         }
     }
 
-    let now = ltime::now_coarse();
+    let now = ltime::today_utc();
     db::rooms::add_member(db, &meta.id, &box_pk, &sig_pk, now).await?;
     let members = db::rooms::list_members(db, &meta.id).await?;
     Ok(JoinRoomResp {
@@ -228,7 +228,7 @@ pub async fn leave(
         return Err(AppError::Forbidden("not a current member of this room"));
     }
 
-    let now = ltime::now_coarse();
+    let now = ltime::today_utc();
     let ok = db::rooms::soft_remove_by_sig(db, &room_id, &sig_pk, now).await?;
     if !ok {
         return Err(AppError::Conflict("already removed"));
@@ -341,7 +341,7 @@ pub async fn remove_and_rekey(
         wraps.push((pk, wrapped));
     }
 
-    let now = time::OffsetDateTime::now_utc();
+    let now = ltime::today_utc();
     let new_epoch = db::rooms::remove_and_rekey(db, &room_id, &target_box, &wraps, now)
         .await
         .map_err(|e| match e {
@@ -367,7 +367,7 @@ pub async fn provenance(db: &PgPool, room_id_b64: &str) -> AppResult<ProvenanceR
         origin_thread: meta.origin_thread.as_ref().map(|b| ids::b64(b)),
         creator_thread_pubkey: meta.creator_thread_pubkey.as_ref().map(|b| ids::b64(b)),
         provenance_sig: meta.provenance_sig.as_ref().map(|b| ids::b64(b)),
-        created_at: lethe_types::CoarseTime(meta.created_at),
+        created_at: lethe_types::CoarseDate(meta.created_at),
     })
 }
 
@@ -398,7 +398,7 @@ pub async fn send_message(
     }
     crypto::verify_room_message_sender(&sender, &sender_sig, &room_id, &nonce, &ciphertext)?;
 
-    let now = ltime::now_coarse();
+    let now = ltime::today_utc();
     let id = db::rooms::insert_message(
         db,
         db::rooms::NewMessage {
@@ -413,7 +413,7 @@ pub async fn send_message(
     .await?;
     Ok(SendMessageResp {
         message_id: ids::b64(&id),
-        created_at: lethe_types::CoarseTime(now),
+        created_at: lethe_types::CoarseDate(now),
     })
 }
 
@@ -453,16 +453,12 @@ pub async fn list_messages_authed(
         .await?
         .ok_or(AppError::Forbidden("requester is not a member"))?;
 
-    let since_bytes = match &req.since {
-        Some(s) => Some(ids::unb64(s).map_err(|_| AppError::BadRequest("since b64"))?),
-        None => None,
-    };
     Ok(MessagesResp {
         messages: db::rooms::list_messages_for_member(
             db,
             &room_id,
             joined_at,
-            since_bytes.as_deref(),
+            req.since_seq,
             500,
         )
         .await?,

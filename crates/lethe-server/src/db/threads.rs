@@ -1,14 +1,14 @@
 //! Thread reads/writes.
 
 use sqlx::PgPool;
-use time::OffsetDateTime;
+use time::Date;
 
 pub async fn create(
     db: &PgPool,
     id: &[u8],
     board_id: &str,
     title: &str,
-    created_at: OffsetDateTime,
+    created_at: Date,
 ) -> Result<(), sqlx::Error> {
     sqlx::query(
         "INSERT INTO threads (id, board_id, title, created_at) VALUES ($1, $2, $3, $4)",
@@ -58,7 +58,8 @@ pub async fn list_for_board(
     limit: i64,
 ) -> Result<Vec<ThreadListItem>, sqlx::Error> {
     let rows: Vec<(Vec<u8>, String)> = sqlx::query_as(
-        "SELECT id, title FROM threads WHERE board_id = $1 ORDER BY created_at DESC LIMIT $2",
+        "SELECT id, title FROM threads WHERE board_id = $1
+         ORDER BY created_at DESC, id DESC LIMIT $2",
     )
     .bind(board_id)
     .bind(limit)
