@@ -51,7 +51,7 @@ async fn list_request_replay_is_rejected() {
         .send()
         .await
         .unwrap();
-    assert!(first.status().is_success(), "first call: {:?}", first);
+    assert!(first.status().is_success(), "first call: {first:?}");
 
     let replay = client
         .post(format!("{}/api/rooms/{}/messages/list", s.base_url, create.room_id))

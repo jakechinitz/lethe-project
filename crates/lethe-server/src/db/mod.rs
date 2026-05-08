@@ -6,6 +6,7 @@
 
 use sqlx::PgPool;
 
+pub mod admin_tokens;
 pub mod federation;
 pub mod feed;
 pub mod moderation;

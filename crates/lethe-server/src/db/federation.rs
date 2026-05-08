@@ -25,10 +25,12 @@ pub async fn upsert_peer(
     server_pubkey: &[u8],
     endpoint: &str,
     label: Option<&str>,
+    initial_cursor: Option<&[u8]>,
 ) -> Result<(), sqlx::Error> {
     sqlx::query(
-        "INSERT INTO federation_peers (server_pubkey, endpoint, label, enabled)
-         VALUES ($1, $2, $3, TRUE)
+        "INSERT INTO federation_peers
+            (server_pubkey, endpoint, label, last_cursor, enabled)
+         VALUES ($1, $2, $3, $4, TRUE)
          ON CONFLICT (server_pubkey) DO UPDATE SET
              endpoint = EXCLUDED.endpoint,
              label = EXCLUDED.label,
@@ -37,6 +39,7 @@ pub async fn upsert_peer(
     .bind(server_pubkey)
     .bind(endpoint)
     .bind(label)
+    .bind(initial_cursor)
     .execute(pool)
     .await?;
     Ok(())

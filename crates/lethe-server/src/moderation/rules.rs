@@ -76,6 +76,7 @@ fn is_severe_harassment(body: &str) -> bool {
 }
 
 fn has_blocklisted_host(body: &str) -> bool {
+    #[allow(clippy::const_is_empty)]
     if MALWARE_HOST_BLOCKLIST.is_empty() {
         return false;
     }

@@ -24,12 +24,20 @@ pub struct InfoResponse {
     pub local_moderation_summary: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operator_label: Option<String>,
+    /// SHA-256 of the published multi-key signed release manifest, if
+    /// the operator pointed `LETHE_RELEASE_MANIFEST` at one. `None`
+    /// means "this binary is running without a signed manifest" —
+    /// peers that require attested releases should refuse to peer
+    /// with such a server.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub release_manifest_sha256: Option<String>,
 }
 
 pub fn build(
     server_pubkey: &[u8; 32],
     local_moderation_summary: String,
     operator_label: Option<String>,
+    release_manifest_sha256: Option<String>,
 ) -> InfoResponse {
     InfoResponse {
         server_pubkey: URL_SAFE_NO_PAD.encode(server_pubkey),
@@ -40,5 +48,23 @@ pub fn build(
         code_commit: env!("LETHE_GIT_COMMIT"),
         local_moderation_summary,
         operator_label,
+        release_manifest_sha256,
     }
+}
+
+/// Reads the release-manifest file at the given path and returns its
+/// SHA-256, hex-encoded. Errors are logged at startup, not surfaced
+/// to peers — a missing/unreadable manifest just means
+/// `release_manifest_sha256` stays `None` in the info response.
+pub fn manifest_sha256(path: &str) -> Option<String> {
+    use sha2::{Digest, Sha256};
+    let bytes = std::fs::read(path).ok()?;
+    let mut h = Sha256::new();
+    h.update(&bytes);
+    let digest = h.finalize();
+    let mut s = String::with_capacity(64);
+    for b in digest {
+        s.push_str(&format!("{b:02x}"));
+    }
+    Some(s)
 }

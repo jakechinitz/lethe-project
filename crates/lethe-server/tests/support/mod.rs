@@ -47,9 +47,11 @@ pub async fn spawn() -> TestServer {
         default_pow_bits: pow_bits as u8,
         federation_enabled: false,
         pull_interval: std::time::Duration::from_secs(60),
+        pull_horizon_days: 0,
         admin_token: Some("test-admin-token".to_string()),
         moderation_summary: None,
         operator_label: None,
+        release_manifest_path: None,
     };
     // Tests are short-lived and largely sequential within a single test
     // case; one connection per server is enough and keeps the total

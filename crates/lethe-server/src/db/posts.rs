@@ -200,18 +200,25 @@ struct PostRow {
     created_at: Date,
     pubkey: Option<Vec<u8>>,
     removal_reason: Option<String>,
+    origin_server_id: Option<Vec<u8>>,
+    origin_server_label: Option<String>,
 }
 
 pub async fn list_in_thread(
     db: &PgPool,
     thread_id: &[u8],
+    self_pubkey: &[u8; 32],
     since_seq: i32,
     limit: i64,
 ) -> Result<Vec<PostView>, sqlx::Error> {
     let rows: Vec<PostRow> = sqlx::query_as(
-        "SELECT p.id, p.seq, p.body, p.created_at, p.pubkey, pr.reason AS removal_reason
+        "SELECT p.id, p.seq, p.body, p.created_at, p.pubkey,
+                pr.reason AS removal_reason,
+                p.origin_server_id,
+                fp.label AS origin_server_label
          FROM posts p
          LEFT JOIN post_removals pr ON pr.post_id = p.id
+         LEFT JOIN federation_peers fp ON fp.server_pubkey = p.origin_server_id
          WHERE p.thread_id = $1 AND p.seq > $2
          ORDER BY p.seq ASC
          LIMIT $3",
@@ -234,6 +241,21 @@ pub async fn list_in_thread(
             Some(pk) => signer_first_seq(db, thread_id, pk).await?,
             None => None,
         };
+        // Hide origin labels for posts originated on this server —
+        // unfederated reads stay clean. A federated copy from a
+        // labelled peer surfaces the label so the client can render
+        // "from <peer>".
+        let local = r
+            .origin_server_id
+            .as_deref()
+            .map(|o| o == &self_pubkey[..])
+            .unwrap_or(true);
+        let origin_server_id = if local {
+            None
+        } else {
+            r.origin_server_id.as_ref().map(|o| ids::b64(o))
+        };
+        let origin_server_label = if local { None } else { r.origin_server_label };
         out.push(PostView {
             post_id: ids::b64(&r.id),
             seq: r.seq,
@@ -241,6 +263,8 @@ pub async fn list_in_thread(
             created_at: CoarseDate(r.created_at),
             pubkey: pubkey.as_ref().map(|p| ids::b64(p)),
             signer_first_seq,
+            origin_server_id,
+            origin_server_label,
         });
     }
     Ok(out)

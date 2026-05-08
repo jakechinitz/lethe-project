@@ -139,7 +139,7 @@ async fn creator_removes_member_and_rekeys() {
         .send()
         .await
         .unwrap();
-    assert!(remove_resp.status().is_success(), "remove: {:?}", remove_resp);
+    assert!(remove_resp.status().is_success(), "remove: {remove_resp:?}");
     let body: RemoveMemberResp = remove_resp.json().await.unwrap();
     assert_eq!(body.current_epoch, 1);
 

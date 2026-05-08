@@ -180,6 +180,7 @@ pub async fn create_post(
 
 pub async fn list_posts(
     db: &PgPool,
+    self_pubkey: &[u8; 32],
     thread_id_b64: &str,
     since_seq: i32,
 ) -> AppResult<Vec<PostView>> {
@@ -188,5 +189,5 @@ pub async fn list_posts(
     if !db::threads::exists(db, &thread_id).await? {
         return Err(AppError::NotFound);
     }
-    Ok(db::posts::list_in_thread(db, &thread_id, since_seq, 500).await?)
+    Ok(db::posts::list_in_thread(db, &thread_id, self_pubkey, since_seq, 500).await?)
 }

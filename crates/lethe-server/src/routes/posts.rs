@@ -45,6 +45,11 @@ pub async fn list(
     Path(thread_id): Path<String>,
     Query(q): Query<ListQuery>,
 ) -> AppResult<Json<ListResp>> {
-    let posts = logic::posts::list_posts(&state.db, &thread_id, q.since_seq).await?;
+    let identity = state
+        .identity
+        .as_ref()
+        .ok_or(AppError::Internal("server identity unavailable"))?;
+    let posts =
+        logic::posts::list_posts(&state.db, identity.pubkey(), &thread_id, q.since_seq).await?;
     Ok(Json(ListResp { posts }))
 }

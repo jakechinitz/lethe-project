@@ -82,18 +82,31 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/federation/info", get(federation::route::info))
         .route(
+            "/federation/peers/public",
+            get(federation::route::list_peers_public),
+        )
+        .route(
             "/federation/peers",
             get(federation::route::list_peers).post(federation::route::add_peer),
         )
         .route(
             "/federation/peers/disable",
             post(federation::route::set_peer_enabled),
+        )
+        .route(
+            "/federation/admin/tokens",
+            get(federation::route::list_tokens).post(federation::route::mint_token),
+        )
+        .route(
+            "/federation/admin/tokens/revoke",
+            post(federation::route::revoke_token),
         );
 
     let pages = Router::new()
         .route("/", get(routes::pages::index))
         .route("/my-rooms", get(routes::pages::my_rooms))
         .route("/moderation", get(routes::pages::moderation_log))
+        .route("/federation", get(routes::pages::federation))
         .route("/b/:board", get(routes::pages::board))
         .route(
             "/b/:board/t/:thread_id",

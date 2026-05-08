@@ -75,7 +75,7 @@ async fn replicates_locally_authored_post_to_peer() {
 
     // Drive a pull on b; it should fetch the post from a.
     let stats = support::pull_once(&b).await;
-    assert!(stats.posts_accepted >= 1, "stats: {:?}", stats);
+    assert!(stats.posts_accepted >= 1, "stats: {stats:?}");
 
     let posts = list_posts(&b, &created.thread_id).await;
     assert_eq!(posts.len(), 1, "thread should have one post on B");
@@ -167,6 +167,105 @@ async fn admin_endpoint_requires_token() {
         .await
         .unwrap();
     assert!(resp.status().is_success());
+}
+
+#[tokio::test]
+async fn replicated_post_carries_origin_label() {
+    let a = support::spawn().await;
+    let b = support::spawn().await;
+    peer_a_with_b(&b, &a).await;
+
+    let body = "post that should be labelled with peer-b on the reader side";
+    let created = create_thread_on(&a, body).await;
+    let _ = support::pull_once(&b).await;
+
+    let posts = list_posts(&b, &created.thread_id).await;
+    assert_eq!(posts.len(), 1);
+    let p = &posts[0];
+    assert!(p.origin_server_id.is_some(), "federated post must carry origin");
+    assert_eq!(
+        p.origin_server_label.as_deref(),
+        Some("peer-b"),
+        "origin label should be joined from federation_peers",
+    );
+
+    // Locally-authored posts on A should NOT carry origin (clean
+    // unfederated experience).
+    let local = create_thread_on(&a, "purely local post").await;
+    let posts_local = list_posts(&a, &local.thread_id).await;
+    assert!(posts_local[0].origin_server_id.is_none());
+    assert!(posts_local[0].origin_server_label.is_none());
+}
+
+#[tokio::test]
+async fn public_peers_endpoint_lists_enabled_only() {
+    let a = support::spawn().await;
+    let b = support::spawn().await;
+    peer_a_with_b(&b, &a).await;
+
+    let client = reqwest::Client::new();
+    let v: serde_json::Value = client
+        .get(format!("{}/api/federation/peers/public", b.base_url))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let peers = v["peers"].as_array().unwrap();
+    assert_eq!(peers.len(), 1);
+    assert_eq!(peers[0]["label"], "peer-b");
+    assert_eq!(peers[0]["enabled"], true);
+    // Cursor / last_pulled_at must NOT leak.
+    assert!(peers[0].get("last_cursor").is_none());
+    assert!(peers[0].get("last_pulled_at").is_none());
+}
+
+#[tokio::test]
+async fn admin_token_table_supersedes_env_after_revoke() {
+    let a = support::spawn().await;
+    let client = reqwest::Client::new();
+
+    // Mint a delegated token using the bootstrap env token.
+    let mint: serde_json::Value = client
+        .post(format!("{}/api/federation/admin/tokens", a.base_url))
+        .bearer_auth(&a.admin_token)
+        .json(&json!({ "label": "alice" }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let alice_token = mint["token"].as_str().unwrap().to_string();
+
+    // The minted token works for admin calls.
+    let resp = client
+        .get(format!("{}/api/federation/peers", a.base_url))
+        .bearer_auth(&alice_token)
+        .send()
+        .await
+        .unwrap();
+    assert!(resp.status().is_success());
+
+    // Revoke it.
+    let resp = client
+        .post(format!("{}/api/federation/admin/tokens/revoke", a.base_url))
+        .bearer_auth(&a.admin_token)
+        .json(&json!({ "label": "alice" }))
+        .send()
+        .await
+        .unwrap();
+    assert!(resp.status().is_success());
+
+    // The revoked token no longer works.
+    let resp = client
+        .get(format!("{}/api/federation/peers", a.base_url))
+        .bearer_auth(&alice_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status().as_u16(), 403);
 }
 
 #[tokio::test]

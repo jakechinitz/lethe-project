@@ -1,0 +1,13 @@
+# Lethe release-signing keys.
+#
+# Each line: <keyid> <base64url Ed25519 pubkey, no padding>
+# Keyid is a short human-readable label. Pubkey is 32 bytes.
+#
+# This file is the single source of truth for who can co-sign a
+# canonical release. Adding/removing a keyid is itself a release
+# event — bump the manifest, have the existing quorum sign the new
+# key set, and only then start including signatures from the new
+# key.
+#
+# An empty file means "no canonical signers yet"; verifiers must
+# refuse the build.

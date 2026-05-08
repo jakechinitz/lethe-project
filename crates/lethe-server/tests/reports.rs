@@ -59,7 +59,7 @@ async fn report_creates_row_and_validates_pow() {
         .send()
         .await
         .unwrap();
-    assert!(resp.status().is_success(), "report: {:?}", resp);
+    assert!(resp.status().is_success(), "report: {resp:?}");
     let body: ReportPostResp = resp.json().await.unwrap();
     assert!(!body.report_id.is_empty());
 
@@ -89,7 +89,7 @@ async fn report_without_reason_succeeds() {
         .send()
         .await
         .unwrap();
-    assert!(resp.status().is_success(), "report: {:?}", resp);
+    assert!(resp.status().is_success(), "report: {resp:?}");
 
     let row: (Option<String>,) = sqlx::query_as(
         "SELECT reason_text FROM reports WHERE post_id = $1",
