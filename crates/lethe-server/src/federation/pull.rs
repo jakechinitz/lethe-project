@@ -32,6 +32,13 @@ use sqlx::PgPool;
 use std::sync::Arc;
 use std::time::Duration;
 
+/// User-Agent set on every outbound federation pull. Identical
+/// across all Lethe servers regardless of build, so peer logs can't
+/// distinguish individual pullers by their reqwest minor version or
+/// reqwest patch level. See the comment in `run_once` for why a
+/// fixed string is preferable to the default per-build UA.
+pub(crate) const USER_AGENT: &str = "Lethe-Federation/lethe-fed-v1";
+
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct StoredCursor {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -75,6 +82,14 @@ pub async fn run_once(
     let peers = db::federation::list_enabled_peers(db).await?;
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
+        // Fixed UA across every Lethe server. The path
+        // `/api/federation/events` already announces Lethe to anyone
+        // observing the request; what we *don't* want is the default
+        // `reqwest/<version>` string differentiating servers by their
+        // build date. Using `lethe-fed-v1` (the protocol version,
+        // never bumped within a major) keeps every Lethe puller
+        // looking identical.
+        .user_agent(USER_AGENT)
         .build()?;
 
     let mut stats = PullStats::default();
@@ -122,7 +137,17 @@ pub async fn run_once(
                 Ok(true) => posts_accepted += 1,
                 Ok(false) => posts_rejected += 1,
                 Err(e) => {
-                    tracing::warn!(error = ?e, "post event ingest failed");
+                    // Production logs get a coarse classifier so a
+                    // peer-correlated journal entry never carries the
+                    // inner DB error / event content. Operators
+                    // wanting specifics flip RUST_LOG=debug on the
+                    // affected node and replay.
+                    tracing::warn!(
+                        kind = ingest_error_kind(e.as_ref()),
+                        peer = %peer.endpoint,
+                        "post event ingest failed",
+                    );
+                    tracing::debug!(error = ?e, peer = %peer.endpoint, "post event ingest failed (detail)");
                     posts_rejected += 1;
                 }
             }
@@ -134,7 +159,12 @@ pub async fn run_once(
                 Ok(true) => removals_applied += 1,
                 Ok(false) => {}
                 Err(e) => {
-                    tracing::warn!(error = ?e, "removal event ingest failed")
+                    tracing::warn!(
+                        kind = ingest_error_kind(e.as_ref()),
+                        peer = %peer.endpoint,
+                        "removal event ingest failed",
+                    );
+                    tracing::debug!(error = ?e, peer = %peer.endpoint, "removal event ingest failed (detail)");
                 }
             }
         }
@@ -315,5 +345,78 @@ fn ed25519_verify(pubkey: &[u8; 32], sig: &[u8; 64], msg: &[u8]) -> Result<(), &
     let vk = VerifyingKey::from_bytes(pubkey).map_err(|_| "bad pubkey")?;
     vk.verify(msg, &Signature::from_bytes(sig))
         .map_err(|_| "verify failed")
+}
+
+/// Coarse classifier for ingest failures, used as the only field in
+/// the warn-level log line. The full Debug repr lands at debug
+/// level, so an operator who needs specifics enables
+/// `RUST_LOG=lethe_server=debug` on the affected node.
+///
+/// Invariant: this function returns one of a small fixed set of
+/// `&'static str` values and never reflects user content (post
+/// bodies, peer-supplied JSON, SQL parameter values).
+///
+/// The string-only error paths (e.g. `.map_err(|_| "...")?` for a
+/// length check) classify as `"other"` because `&'static str` does
+/// not implement `std::error::Error` and so can't be downcast back
+/// out of a `Box<dyn Error>`. That's accepted: those paths are rare
+/// length-validation errors, the warn line still fires, and an
+/// operator wanting detail flips on debug logging.
+fn ingest_error_kind(e: &(dyn std::error::Error + 'static)) -> &'static str {
+    if e.downcast_ref::<events::DecodeError>().is_some() {
+        return "decode";
+    }
+    if e.downcast_ref::<sqlx::Error>().is_some() {
+        return "db";
+    }
+    if e.downcast_ref::<base64::DecodeError>().is_some() {
+        return "base64";
+    }
+    "other"
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ingest_error_kind_classifies_known_variants() {
+        let e: Box<dyn std::error::Error + Send + Sync> =
+            Box::new(events::DecodeError::Signature);
+        assert_eq!(ingest_error_kind(e.as_ref()), "decode");
+
+        let e: Box<dyn std::error::Error + Send + Sync> =
+            Box::new(sqlx::Error::Configuration("anything".into()));
+        assert_eq!(ingest_error_kind(e.as_ref()), "db");
+    }
+
+    #[test]
+    fn ingest_error_kind_returns_static_strings_only() {
+        // Anything not specifically classified falls into "other" —
+        // the warn line still fires and operators flip debug level
+        // to investigate.
+        let kinds = ["decode", "db", "base64", "other"];
+        let dummy: Box<dyn std::error::Error + Send + Sync> =
+            Box::new(std::io::Error::other("x"));
+        assert!(kinds.contains(&ingest_error_kind(dummy.as_ref())));
+    }
+
+    #[test]
+    fn user_agent_is_protocol_version_only() {
+        // The whole point of fixing M2 is that every Lethe puller
+        // looks identical. If someone bumps the UA to include the
+        // crate version (`Lethe-Federation/0.1.0`) or the reqwest
+        // version, this test fails — the cure would re-introduce
+        // build-date fingerprintability across servers.
+        assert_eq!(USER_AGENT, "Lethe-Federation/lethe-fed-v1");
+        assert!(
+            !USER_AGENT.contains(env!("CARGO_PKG_VERSION")),
+            "UA must not embed the crate version",
+        );
+        assert!(
+            !USER_AGENT.contains("reqwest"),
+            "UA must not embed the reqwest version",
+        );
+    }
 }
 

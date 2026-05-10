@@ -268,6 +268,77 @@ async fn admin_token_table_supersedes_env_after_revoke() {
     assert_eq!(resp.status().as_u16(), 403);
 }
 
+/// Spins up a minimal axum server that captures the first User-Agent
+/// it sees on `GET /api/federation/events`, lets the federation pull
+/// worker hit it, and asserts the UA is the fixed
+/// `Lethe-Federation/lethe-fed-v1` rather than reqwest's default.
+///
+/// This is the regression test for M2 — the privacy-audit fix that
+/// stopped servers from broadcasting their reqwest minor version on
+/// every pull.
+#[tokio::test]
+async fn pull_worker_sends_fixed_user_agent() {
+    use axum::{extract::State, http::HeaderMap, routing::get, Json, Router};
+    use std::sync::{Arc, Mutex};
+
+    let captured: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+    let state = captured.clone();
+    let app = Router::new()
+        .route(
+            "/api/federation/events",
+            get(
+                |State(s): State<Arc<Mutex<Option<String>>>>, headers: HeaderMap| async move {
+                    let ua = headers
+                        .get("user-agent")
+                        .and_then(|v| v.to_str().ok())
+                        .unwrap_or("")
+                        .to_string();
+                    *s.lock().unwrap() = Some(ua);
+                    Json(serde_json::json!({"posts": [], "removals": []}))
+                },
+            ),
+        )
+        .with_state(state);
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let endpoint = format!("http://{addr}");
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+
+    // Real Lethe instance pulling from the fake peer.
+    let puller = support::spawn().await;
+    let client = reqwest::Client::new();
+    // Fake peer's pubkey: 32 zero bytes — irrelevant since we only
+    // verify what UA the puller sends, not what the peer returns.
+    let fake_pubkey_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode([1u8; 32]);
+    let resp = client
+        .post(format!("{}/api/federation/peers", puller.base_url))
+        .bearer_auth(&puller.admin_token)
+        .json(&json!({
+            "server_pubkey": fake_pubkey_b64,
+            "endpoint": endpoint,
+            "label": "fake",
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert!(resp.status().is_success());
+
+    let _ = support::pull_once(&puller).await;
+
+    let ua = captured.lock().unwrap().clone().expect("peer received a pull");
+    assert_eq!(
+        ua, "Lethe-Federation/lethe-fed-v1",
+        "pull worker must send the fixed Lethe UA, not reqwest's default",
+    );
+    assert!(
+        !ua.contains("reqwest"),
+        "UA must not leak the reqwest version",
+    );
+}
+
 #[tokio::test]
 async fn defederation_stops_new_pulls() {
     let a = support::spawn().await;
