@@ -216,9 +216,22 @@ function renderPost(
   const reportBtn = el("button", { type: "button", class: "report-btn" }, ["Report"]);
   reportBtn.addEventListener("click", () => openReportDialog(article, p.post_id));
 
-  const meta_ = el("div", { class: "meta" }, [
+  // If the post originated on a peer, surface a small badge so the
+  // reader can attribute the content. Locally-authored posts have
+  // `origin_server_id` omitted by the server.
+  const metaChildren: Array<Node | string> = [
     author, " · ", seqLink, " · ", ts, " · ", replyBtn, " · ", reportBtn,
-  ]);
+  ];
+  if (p.origin_server_id) {
+    const labelText =
+      p.origin_server_label ?? `${p.origin_server_id.slice(0, 8)}…`;
+    const fromBadge = el("span", { class: "origin-badge" }, [
+      "from ", el("strong", {}, [labelText]),
+    ]);
+    fromBadge.title = `Origin server: ${p.origin_server_id}`;
+    metaChildren.push(" · ", fromBadge);
+  }
+  const meta_ = el("div", { class: "meta" }, metaChildren);
   const body = el("div", { class: "body" }, renderBody(p.body));
 
   article.appendChild(meta_);

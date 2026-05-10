@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Federation &middot; Lethe{% endblock %}
+{% block main %}
+<h1>Federation</h1>
+<p class="muted">
+  This is one Lethe instance among many. Public posts may originate
+  on this server or on a peered server; private rooms are local to
+  this instance only and do not federate.
+</p>
+
+<section id="info">
+  <h2>This server</h2>
+  <p class="muted">Loading…</p>
+</section>
+
+<section id="peers">
+  <h2>Peered servers</h2>
+  <p class="muted">Loading…</p>
+</section>
+
+<script type="module" src="/static/js/federation.js"></script>
+{% endblock %}

@@ -26,7 +26,7 @@ async fn anonymous_thread_and_reply() {
         .send()
         .await
         .unwrap();
-    assert!(create.status().is_success(), "create thread: {:?}", create);
+    assert!(create.status().is_success(), "create thread: {create:?}");
     let created: CreateThreadResp = create.json().await.unwrap();
     assert_eq!(created.seq, 1);
 

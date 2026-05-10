@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/lethe-cli",
     "crates/lethe-server",
     "crates/lethe-types",
 ]
@@ -8,7 +9,7 @@ members = [
 [workspace.package]
 edition = "2021"
 license = "AGPL-3.0-or-later"
-rust-version = "1.83"
+rust-version = "1.88"
 
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }

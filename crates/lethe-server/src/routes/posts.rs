@@ -1,6 +1,6 @@
 //! `POST /api/threads/:thread_id/posts` and `GET .../posts?since_seq=...`
 
-use crate::{error::AppResult, logic, state::AppState};
+use crate::{error::{AppError, AppResult}, logic, state::AppState};
 use axum::{
     extract::{Path, Query, State},
     Json,
@@ -13,10 +13,15 @@ pub async fn create(
     Path(thread_id): Path<String>,
     Json(req): Json<CreatePostReq>,
 ) -> AppResult<Json<CreatePostResp>> {
+    let identity = state
+        .identity
+        .as_ref()
+        .ok_or(AppError::Internal("server identity unavailable"))?;
     let resp = logic::posts::create_post(
         &state.db,
         state.cfg.default_pow_bits as u32,
         state.classifier.as_ref(),
+        identity.pubkey(),
         &thread_id,
         req,
     )
@@ -40,6 +45,11 @@ pub async fn list(
     Path(thread_id): Path<String>,
     Query(q): Query<ListQuery>,
 ) -> AppResult<Json<ListResp>> {
-    let posts = logic::posts::list_posts(&state.db, &thread_id, q.since_seq).await?;
+    let identity = state
+        .identity
+        .as_ref()
+        .ok_or(AppError::Internal("server identity unavailable"))?;
+    let posts =
+        logic::posts::list_posts(&state.db, identity.pubkey(), &thread_id, q.since_seq).await?;
     Ok(Json(ListResp { posts }))
 }

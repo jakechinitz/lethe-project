@@ -9,14 +9,46 @@ pub async fn create(
     board_id: &str,
     title: &str,
     created_at: Date,
+    origin_server_id: &[u8],
 ) -> Result<(), sqlx::Error> {
     sqlx::query(
-        "INSERT INTO threads (id, board_id, title, created_at) VALUES ($1, $2, $3, $4)",
+        "INSERT INTO threads (id, board_id, title, created_at, origin_server_id)
+         VALUES ($1, $2, $3, $4, $5)",
     )
     .bind(id)
     .bind(board_id)
     .bind(title)
     .bind(created_at)
+    .bind(origin_server_id)
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
+/// Idempotently ensures a federated thread row exists locally. Used by
+/// the federation pull worker the first time a peer reports a post in
+/// a thread we haven't seen. The thread id is the origin server's
+/// thread id (federated copies share that id by design — the same
+/// thread on different servers is the same row from the pull worker's
+/// perspective).
+pub async fn ensure_for_federation(
+    db: &PgPool,
+    id: &[u8],
+    board_id: &str,
+    title: &str,
+    created_at: Date,
+    origin_server_id: &[u8],
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO threads (id, board_id, title, created_at, origin_server_id)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (id) DO NOTHING",
+    )
+    .bind(id)
+    .bind(board_id)
+    .bind(title)
+    .bind(created_at)
+    .bind(origin_server_id)
     .execute(db)
     .await?;
     Ok(())

@@ -79,6 +79,14 @@ export interface PostView {
   created_at: string;
   pubkey?: string;
   signer_first_seq?: number;
+  /// 32-byte Ed25519 pubkey of the originating server, urlsafe-base64.
+  /// Absent when the post was authored on the server you're reading
+  /// from — clients should treat absent as "this server."
+  origin_server_id?: string;
+  /// Human label of the origin server, joined from the local peer
+  /// list. May be absent even when origin_server_id is set (peer was
+  /// added without a label).
+  origin_server_label?: string;
 }
 
 export interface MemberView {

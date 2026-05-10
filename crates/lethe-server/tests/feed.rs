@@ -48,7 +48,7 @@ async fn reply(
         .send()
         .await
         .unwrap();
-    assert!(resp.status().is_success(), "reply: {:?}", resp);
+    assert!(resp.status().is_success(), "reply: {resp:?}");
 }
 
 #[tokio::test]

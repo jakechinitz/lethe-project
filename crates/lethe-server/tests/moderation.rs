@@ -66,7 +66,7 @@ async fn duplicate_body_within_window_is_rejected() {
     let body = "this is a perfectly normal post about a topic of interest";
 
     let r1 = submit_thread(&client, &s.base_url, s.pow_bits, "economy", "first", body).await;
-    assert!(r1.status().is_success(), "first: {:?}", r1);
+    assert!(r1.status().is_success(), "first: {r1:?}");
 
     let r2 = submit_thread(&client, &s.base_url, s.pow_bits, "economy", "second", body).await;
     assert_eq!(r2.status().as_u16(), 400);
@@ -86,7 +86,7 @@ async fn duplicate_across_boards_is_allowed() {
     assert!(r1.status().is_success());
 
     let r2 = submit_thread(&client, &s.base_url, s.pow_bits, "science_tech", "b", body).await;
-    assert!(r2.status().is_success(), "cross-board duplicate should pass: {:?}", r2);
+    assert!(r2.status().is_success(), "cross-board duplicate should pass: {r2:?}");
 }
 
 #[tokio::test]
@@ -114,8 +114,7 @@ async fn mild_profanity_passes() {
     let resp = submit_thread(&client, &s.base_url, s.pow_bits, "economy", "ok", body).await;
     assert!(
         resp.status().is_success(),
-        "mild profanity should pass: {:?}",
-        resp
+        "mild profanity should pass: {resp:?}"
     );
     let count: (i64,) = sqlx::query_as("SELECT count(*) FROM moderation_actions")
         .fetch_one(&s.db)

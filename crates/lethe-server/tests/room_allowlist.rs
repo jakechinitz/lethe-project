@@ -51,7 +51,7 @@ async fn create_thread_and_signers(
             .send()
             .await
             .unwrap();
-        assert!(resp.status().is_success(), "signed post: {:?}", resp);
+        assert!(resp.status().is_success(), "signed post: {resp:?}");
         idents.push(me);
     }
 
@@ -128,7 +128,7 @@ async fn restricted_invite_lets_only_allowlisted_anons_join() {
         .send()
         .await
         .unwrap();
-    assert!(resp.status().is_success(), "bob join: {:?}", resp);
+    assert!(resp.status().is_success(), "bob join: {resp:?}");
 
     // Charlie (signed in the thread but NOT on the allowlist) is rejected.
     let charlie_member = browser::new_member_keys();

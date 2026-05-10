@@ -65,6 +65,16 @@ pub struct PostView {
     pub pubkey: Option<B64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub signer_first_seq: Option<i32>,
+    /// 32-byte Ed25519 pubkey of the server this post originated on.
+    /// May be absent on legacy rows; clients should treat absent as
+    /// "this server" for backwards compatibility.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin_server_id: Option<B64>,
+    /// Human label of the origin server, joined from
+    /// `federation_peers.label`. `None` when the origin is the
+    /// reading server itself, or when it's an un-labelled peer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin_server_label: Option<String>,
 }
 
 /// Canonical bytes that a thread-signing key signs over for a post.

@@ -15,6 +15,7 @@ pub async fn create_thread(
     db: &PgPool,
     pow_bits: u32,
     classifier: &dyn moderation::classifier::Classifier,
+    server_pubkey: &[u8; 32],
     req: CreateThreadReq,
 ) -> AppResult<CreateThreadResp> {
     if req.title.is_empty() || req.title.len() > MAX_TITLE {
@@ -68,7 +69,7 @@ pub async fn create_thread(
     };
 
     let now = ltime::today_utc();
-    db::threads::create(db, &thread_id_vec, &req.board_id, &req.title, now)
+    db::threads::create(db, &thread_id_vec, &req.board_id, &req.title, now, server_pubkey)
         .await
         .map_err(|e| match &e {
             sqlx::Error::Database(d) if d.constraint() == Some("threads_pkey") => {
@@ -85,6 +86,7 @@ pub async fn create_thread(
             pubkey: pubkey_bytes.as_deref(),
             signature: signature_bytes.as_deref(),
             created_at: now,
+            origin_server_id: server_pubkey,
         },
     )
     .await?;
@@ -111,6 +113,7 @@ pub async fn create_post(
     db: &PgPool,
     pow_bits: u32,
     classifier: &dyn moderation::classifier::Classifier,
+    server_pubkey: &[u8; 32],
     thread_id_b64: &str,
     req: CreatePostReq,
 ) -> AppResult<CreatePostResp> {
@@ -158,6 +161,7 @@ pub async fn create_post(
             pubkey: pubkey_bytes.as_deref(),
             signature: signature_bytes.as_deref(),
             created_at: now,
+            origin_server_id: server_pubkey,
         },
     )
     .await?;
@@ -176,6 +180,7 @@ pub async fn create_post(
 
 pub async fn list_posts(
     db: &PgPool,
+    self_pubkey: &[u8; 32],
     thread_id_b64: &str,
     since_seq: i32,
 ) -> AppResult<Vec<PostView>> {
@@ -184,5 +189,5 @@ pub async fn list_posts(
     if !db::threads::exists(db, &thread_id).await? {
         return Err(AppError::NotFound);
     }
-    Ok(db::posts::list_in_thread(db, &thread_id, since_seq, 500).await?)
+    Ok(db::posts::list_in_thread(db, &thread_id, self_pubkey, since_seq, 500).await?)
 }

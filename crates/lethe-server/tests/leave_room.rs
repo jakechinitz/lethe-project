@@ -76,7 +76,7 @@ async fn member_can_leave_and_is_locked_out() {
         .send()
         .await
         .unwrap();
-    assert!(leave_resp.status().is_success(), "leave: {:?}", leave_resp);
+    assert!(leave_resp.status().is_success(), "leave: {leave_resp:?}");
 
     // Bob now cannot post.
     let (n, ct) = browser::encrypt_message("after leaving", &room_id_bytes, &room_key);

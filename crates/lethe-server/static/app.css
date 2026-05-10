@@ -775,3 +775,20 @@ select option {
   .posts .comment.depth-2 { margin-left: 1.3rem; }
   .posts .comment { padding: .7rem .75rem; }
 }
+
+/* Federation page + origin attribution. */
+.kv {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: .25rem 1rem;
+  margin: .5rem 0;
+  font-size: .92rem;
+}
+.kv dt { color: var(--muted, #888); }
+.kv dd { margin: 0; word-break: break-all; }
+.peer-list { padding-left: 1rem; }
+.peer-list li { margin: .35rem 0; }
+.origin-badge {
+  font-size: .82rem;
+  color: var(--muted, #888);
+}

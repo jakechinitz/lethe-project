@@ -208,6 +208,14 @@ pub async fn moderation_log(State(state): State<AppState>) -> AppResult<Response
 }
 
 #[derive(Template)]
+#[template(path = "federation.html")]
+struct FederationPage {}
+
+pub async fn federation() -> AppResult<Response> {
+    Ok(FederationPage {}.into_response())
+}
+
+#[derive(Template)]
 #[template(path = "404.html")]
 struct NotFoundPage {}
 

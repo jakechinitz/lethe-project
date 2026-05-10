@@ -1,3 +1,8 @@
 [toolchain]
-channel = "stable"
+# Pin to a specific minor version so reproducible-build runs on
+# different machines produce byte-identical binaries. Bumping this
+# is a release-time decision; CI verifies the resulting build still
+# matches a known-good multi-key signed manifest before tagging.
+channel = "1.88.0"
 components = ["clippy", "rustfmt"]
+profile = "minimal"
