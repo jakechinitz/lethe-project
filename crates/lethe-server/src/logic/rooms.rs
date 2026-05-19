@@ -27,6 +27,29 @@ pub async fn create(db: &PgPool, req: CreateRoomReq) -> AppResult<CreateRoomResp
         return Err(AppError::BadRequest("wrapped_key too large"));
     }
 
+    // Authenticate the creator: a signature by `creator_sig_pubkey` over
+    // the canonical create payload, scoped by a fresh timestamp and
+    // nonce-deduped against replay.
+    let create_sig =
+        ids::unb64(&req.creator_create_sig).map_err(|_| AppError::BadRequest("creator_create_sig b64"))?;
+    if create_sig.len() != SIG_LEN {
+        return Err(AppError::BadRequest("creator_create_sig length"));
+    }
+    let now_ts = time::OffsetDateTime::now_utc().unix_timestamp();
+    if (now_ts - req.creator_create_ts).abs() > 60 {
+        return Err(AppError::BadRequest("creator_create_ts outside ±60s window"));
+    }
+    crypto::verify_create_room(
+        &creator_sig,
+        &create_sig,
+        &creator_box,
+        &wrapped,
+        req.creator_create_ts,
+    )?;
+    if !db::nonces::record(db, "create", &creator_sig, req.creator_create_ts).await? {
+        return Err(AppError::Conflict("replay: this signature was already used"));
+    }
+
     let origin_thread = match &req.origin_thread {
         Some(s) => Some(ids::unb64(s).map_err(|_| AppError::BadRequest("origin_thread b64"))?),
         None => None,
@@ -262,15 +285,51 @@ pub async fn wrap(
 ) -> AppResult<()> {
     let room_id = ids::unb64(room_id_b64).map_err(|_| AppError::BadRequest("room_id b64"))?;
     let for_box = decode_pubkey(&req.for_box_pubkey, "for_box_pubkey")?;
-    let inviter = decode_pubkey(&req.inviter_box_pubkey, "inviter_box_pubkey")?;
+    let inviter_box = decode_pubkey(&req.inviter_box_pubkey, "inviter_box_pubkey")?;
+    let inviter_sig_pk = decode_pubkey(&req.inviter_sig_pubkey, "inviter_sig_pubkey")?;
     let wrapped = ids::unb64(&req.wrapped_key).map_err(|_| AppError::BadRequest("wrapped b64"))?;
     if wrapped.len() > MAX_WRAPPED_KEY {
         return Err(AppError::BadRequest("wrapped_key too large"));
     }
-    if !db::rooms::is_member_by_box(db, &room_id, &inviter).await? {
-        return Err(AppError::Forbidden("inviter is not a member"));
+    let inviter_sig =
+        ids::unb64(&req.inviter_sig).map_err(|_| AppError::BadRequest("inviter_sig b64"))?;
+    if inviter_sig.len() != SIG_LEN {
+        return Err(AppError::BadRequest("inviter_sig length"));
     }
-    let ok = db::rooms::grant_wrap(db, &room_id, &for_box, &wrapped, &inviter).await?;
+
+    let now_ts = time::OffsetDateTime::now_utc().unix_timestamp();
+    if (now_ts - req.inviter_ts).abs() > 60 {
+        return Err(AppError::BadRequest("inviter_ts outside ±60s window"));
+    }
+    crypto::verify_wrap_request(
+        &inviter_sig_pk,
+        &inviter_sig,
+        &room_id,
+        &for_box,
+        &wrapped,
+        req.inviter_ts,
+    )?;
+
+    // The inviter's sig pubkey AND box pubkey must both be on the same
+    // active member row — i.e. the signer can't claim a different
+    // member's box pubkey when granting the wrap.
+    if !db::rooms::is_active_member_pair(db, &room_id, &inviter_sig_pk, &inviter_box).await? {
+        return Err(AppError::Forbidden(
+            "inviter sig/box pubkey pair is not an active member",
+        ));
+    }
+
+    // Nonce-namespace per recipient so an inviter can fan-out wraps to
+    // several pending joiners with the same ts. The signature already
+    // binds for_box_pubkey, so replays across recipients are impossible
+    // by signature mismatch alone — the nonce just stops replays of the
+    // exact same wrap.
+    let nonce_kind = format!("wrap:{}", req.for_box_pubkey);
+    if !db::nonces::record(db, &nonce_kind, &inviter_sig_pk, req.inviter_ts).await? {
+        return Err(AppError::Conflict("replay: this signature was already used"));
+    }
+
+    let ok = db::rooms::grant_wrap(db, &room_id, &for_box, &wrapped, &inviter_box).await?;
     if !ok {
         return Err(AppError::Conflict("no pending member matches"));
     }

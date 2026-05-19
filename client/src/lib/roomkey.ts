@@ -188,6 +188,16 @@ export async function encryptMessage(
 
 /// Tries each historicized key (newest first); returns the plaintext from
 /// the first that decrypts. Throws if none work.
+///
+/// We distinguish AEAD authentication failures (`Error: ...`) from
+/// errors raised by sodium itself (sodium not ready, parameter type
+/// mismatch). The AEAD path returns a plain `Error` whose message
+/// starts with "wrong secret key" or similar; that's the only error we
+/// suppress to "try the next key." Anything else — a string thrown by
+/// libsodium, a TypeError, a sodium-not-ready promise rejection — is a
+/// signal we should NOT silently treat as a wrong-key, since it could
+/// be a tampered ciphertext field, a runtime mismatch, or a
+/// supply-chain anomaly. Those propagate.
 export async function decryptMessage(
   ciphertext: Uint8Array,
   nonce: Uint8Array,
@@ -195,6 +205,7 @@ export async function decryptMessage(
   roomKeys: Uint8Array[],
 ): Promise<Uint8Array> {
   const s = await sodium();
+  let lastAeadErr: Error | null = null;
   for (let i = roomKeys.length - 1; i >= 0; i--) {
     try {
       return s.crypto_aead_xchacha20poly1305_ietf_decrypt(
@@ -204,11 +215,25 @@ export async function decryptMessage(
         nonce,
         roomKeys[i],
       );
-    } catch {
-      continue;
+    } catch (e) {
+      if (isAeadAuthFailure(e)) {
+        lastAeadErr = e as Error;
+        continue;
+      }
+      throw e;
     }
   }
-  throw new Error("no room key decrypts this message");
+  throw lastAeadErr ?? new Error("no room keys to try");
+}
+
+/// libsodium-wrappers signals MAC failure by throwing an `Error` whose
+/// message includes "wrong secret key for the given ciphertext" (or,
+/// historically, "incorrect key pair for the given ciphertext"). All
+/// other thrown values — strings, TypeErrors, unrelated `Error`s — are
+/// real runtime bugs we don't want to hide.
+function isAeadAuthFailure(e: unknown): boolean {
+  if (!(e instanceof Error)) return false;
+  return /wrong secret key|incorrect key|verification failed/i.test(e.message);
 }
 
 export async function signMessageEnvelope(
@@ -297,6 +322,50 @@ export async function signRemoveRequest(
     targetBoxPubkey,
   );
   return s.crypto_sign_detached(payload, sigPriv);
+}
+
+/// Signs a create-room request:
+///   `b"lethe-create-v1\x00" || ts_le8 || creator_box_pubkey || creator_sig_pubkey || wrapped_key_for_creator`.
+/// Proves the caller controls the creator's signing key and consented
+/// to room creation under this box pubkey.
+export async function signCreateRoom(
+  creatorBoxPubkey: Uint8Array,
+  creatorSigPubkey: Uint8Array,
+  wrappedKeyForCreator: Uint8Array,
+  unixTs: number,
+  creatorSigPriv: Uint8Array,
+): Promise<Uint8Array> {
+  const s = await sodium();
+  const payload = concat(
+    utf8("lethe-create-v1\x00"),
+    tsLeBytes(unixTs),
+    creatorBoxPubkey,
+    creatorSigPubkey,
+    wrappedKeyForCreator,
+  );
+  return s.crypto_sign_detached(payload, creatorSigPriv);
+}
+
+/// Signs a wrap-key request:
+///   `b"lethe-wrap-v1\x00" || ts_le8 || room_id || for_box_pubkey || wrapped_key`.
+/// Server verifies the (sig, box) pubkey pair is an active member row
+/// before applying the wrap.
+export async function signWrapRequest(
+  roomId: Uint8Array,
+  forBoxPubkey: Uint8Array,
+  wrappedKey: Uint8Array,
+  unixTs: number,
+  inviterSigPriv: Uint8Array,
+): Promise<Uint8Array> {
+  const s = await sodium();
+  const payload = concat(
+    utf8("lethe-wrap-v1\x00"),
+    tsLeBytes(unixTs),
+    roomId,
+    forBoxPubkey,
+    wrappedKey,
+  );
+  return s.crypto_sign_detached(payload, inviterSigPriv);
 }
 
 function tsLeBytes(unixTs: number): Uint8Array {

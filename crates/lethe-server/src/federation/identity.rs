@@ -5,7 +5,7 @@
 //! derived deterministically from the seed. This keeps the schema small
 //! and lets operators back up the seed alone.
 
-use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
+use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use rand::RngCore as _;
 use sqlx::PgPool;
 
@@ -109,6 +109,9 @@ impl Identity {
 }
 
 /// Verifies an Ed25519 signature produced by some peer's server key.
+/// Uses `verify_strict` so a peer can't substitute a malleable variant
+/// of an otherwise-valid signature — federation pulls match the same
+/// strict mode `crypto::verify_ed25519` uses for local routes.
 pub fn verify_server_signature(
     server_pubkey: &[u8],
     signature: &[u8],
@@ -117,7 +120,7 @@ pub fn verify_server_signature(
     let pk: [u8; 32] = server_pubkey.try_into().map_err(|_| "bad server pubkey")?;
     let sig: [u8; 64] = signature.try_into().map_err(|_| "bad signature")?;
     let vk = VerifyingKey::from_bytes(&pk).map_err(|_| "bad server pubkey")?;
-    vk.verify(msg, &Signature::from_bytes(&sig))
+    vk.verify_strict(msg, &Signature::from_bytes(&sig))
         .map_err(|_| "signature does not verify")
 }
 

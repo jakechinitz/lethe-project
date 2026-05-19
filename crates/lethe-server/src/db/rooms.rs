@@ -171,7 +171,9 @@ pub async fn active_member_count(
 }
 
 /// Stores a wrapped room key for a pending member and records who invited
-/// them (the inviter must already be a member of this room).
+/// them. The inviter must already be a current (non-removed) member of
+/// this room; the route handler authenticates them with a signed
+/// payload before calling this.
 pub async fn grant_wrap(
     db: &PgPool,
     room_id: &[u8],
@@ -189,7 +191,9 @@ pub async fn grant_wrap(
            AND wrapped_key IS NULL
            AND EXISTS (
                SELECT 1 FROM room_members
-                WHERE room_id = $1 AND member_box_pubkey = $4
+                WHERE room_id = $1
+                  AND member_box_pubkey = $4
+                  AND removed_at IS NULL
            )",
     )
     .bind(room_id)
@@ -199,6 +203,30 @@ pub async fn grant_wrap(
     .execute(db)
     .await?;
     Ok(res.rows_affected() == 1)
+}
+
+/// True iff `(sig_pubkey, box_pubkey)` is an active member row in this
+/// room. Used to confirm the inviter on a wrap call hasn't swapped one
+/// pubkey for another that doesn't belong to them.
+pub async fn is_active_member_pair(
+    db: &PgPool,
+    room_id: &[u8],
+    sig_pubkey: &[u8],
+    box_pubkey: &[u8],
+) -> Result<bool, sqlx::Error> {
+    let row: Option<(i32,)> = sqlx::query_as(
+        "SELECT 1 FROM room_members
+         WHERE room_id = $1
+           AND member_sig_pubkey = $2
+           AND member_box_pubkey = $3
+           AND removed_at IS NULL",
+    )
+    .bind(room_id)
+    .bind(sig_pubkey)
+    .bind(box_pubkey)
+    .fetch_optional(db)
+    .await?;
+    Ok(row.is_some())
 }
 
 pub async fn is_member(

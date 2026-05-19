@@ -126,11 +126,21 @@ form.addEventListener("submit", async (ev) => {
   const k = await roomkey.generateForNewRoom();
   const currentRoomKey = k.roomKeys[k.roomKeys.length - 1];
   const wrappedSelf = await roomkey.wrapRoomKey(currentRoomKey, k.boxPub);
+  const createTs = Math.floor(Date.now() / 1000);
+  const createSig = await roomkey.signCreateRoom(
+    k.boxPub,
+    k.sigPub,
+    wrappedSelf,
+    createTs,
+    k.sigPriv,
+  );
 
   const body: Record<string, unknown> = {
     creator_box_pubkey: b64encode(k.boxPub),
     creator_sig_pubkey: b64encode(k.sigPub),
     wrapped_key_for_creator: b64encode(wrappedSelf),
+    creator_create_ts: createTs,
+    creator_create_sig: b64encode(createSig),
   };
 
   if (fromThreadId && attachProvenance.checked) {

@@ -29,6 +29,13 @@ pub struct CreateRoomReq {
     /// `origin_thread` to be set.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub allowlist_thread_pubkeys: Option<Vec<B64>>,
+    /// Unix timestamp (seconds). Server rejects if more than 60 s skew.
+    pub creator_create_ts: i64,
+    /// Detached Ed25519 sig by `creator_sig_pubkey` over
+    /// `canonical_create_room(...)`. Proves the caller controls
+    /// `creator_sig_pubkey` and consented to room creation under
+    /// `creator_box_pubkey`.
+    pub creator_create_sig: B64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -86,6 +93,14 @@ pub struct WrapKeyReq {
     /// MUST equal the calling member's own box pubkey. Recorded as
     /// `invited_by_box_pubkey` on the recipient's member row.
     pub inviter_box_pubkey: B64,
+    /// The inviter's Ed25519 signing pubkey. Server checks that
+    /// `(inviter_sig_pubkey, inviter_box_pubkey)` is an active member
+    /// row, so the inviter can't claim someone else's box pubkey.
+    pub inviter_sig_pubkey: B64,
+    pub inviter_ts: i64,
+    /// Detached Ed25519 sig by `inviter_sig_pubkey` over
+    /// `canonical_wrap_request(...)`.
+    pub inviter_sig: B64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -281,5 +296,55 @@ pub fn canonical_message_payload(room_id: &[u8], nonce: &[u8], ciphertext: &[u8]
     buf.extend_from_slice(room_id);
     buf.extend_from_slice(nonce);
     buf.extend_from_slice(ciphertext);
+    buf
+}
+
+/// Canonical bytes a room creator signs to authenticate `POST /api/rooms`.
+///
+/// Binds the creator's two pubkeys, the self-wrapped room key, and a
+/// fresh timestamp. The optional thread-provenance fields aren't bound
+/// because the server already verifies the provenance signature
+/// separately against the creator's *thread* key, which is a different
+/// signing identity from `creator_sig_pubkey`.
+///
+/// Server checks: `(now - ts).abs() <= 60`.
+pub fn canonical_create_room(
+    creator_box_pubkey: &[u8],
+    creator_sig_pubkey: &[u8],
+    wrapped_key_for_creator: &[u8],
+    ts: i64,
+) -> Vec<u8> {
+    let mut buf = Vec::with_capacity(
+        16 + 8 + creator_box_pubkey.len() + creator_sig_pubkey.len() + wrapped_key_for_creator.len(),
+    );
+    buf.extend_from_slice(b"lethe-create-v1\x00");
+    buf.extend_from_slice(&ts.to_le_bytes());
+    buf.extend_from_slice(creator_box_pubkey);
+    buf.extend_from_slice(creator_sig_pubkey);
+    buf.extend_from_slice(wrapped_key_for_creator);
+    buf
+}
+
+/// Canonical bytes an existing member signs to authenticate a
+/// `POST /api/rooms/:room_id/wrap` call. Binds the room id, the
+/// recipient's box pubkey, the wrapped-key bytes, and a fresh ts so
+/// captured wraps can't be replayed (`request_nonces` dedupes
+/// `(kind="wrap:<for_box_pubkey>", sig_pubkey, ts)`).
+///
+/// Server checks: `(now - ts).abs() <= 60`.
+pub fn canonical_wrap_request(
+    room_id: &[u8],
+    for_box_pubkey: &[u8],
+    wrapped_key: &[u8],
+    ts: i64,
+) -> Vec<u8> {
+    let mut buf = Vec::with_capacity(
+        14 + room_id.len() + 8 + for_box_pubkey.len() + wrapped_key.len(),
+    );
+    buf.extend_from_slice(b"lethe-wrap-v1\x00");
+    buf.extend_from_slice(&ts.to_le_bytes());
+    buf.extend_from_slice(room_id);
+    buf.extend_from_slice(for_box_pubkey);
+    buf.extend_from_slice(wrapped_key);
     buf
 }

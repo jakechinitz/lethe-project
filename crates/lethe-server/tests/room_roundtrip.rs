@@ -61,6 +61,14 @@ async fn room_e2ee_roundtrip_with_provenance() {
         &creator_thread.public_key,
         &creator_thread.private_key,
     );
+    let create_ts = time::OffsetDateTime::now_utc().unix_timestamp();
+    let create_sig = browser::sign_create_room(
+        &alice.box_pub,
+        &alice.sig_pub,
+        &alice_self_wrapped,
+        create_ts,
+        &alice.sig_priv,
+    );
     let create_resp: CreateRoomResp = client
         .post(format!("{}/api/rooms", s.base_url))
         .json(&json!({
@@ -70,6 +78,8 @@ async fn room_e2ee_roundtrip_with_provenance() {
             "wrapped_key_for_creator": browser::b64(&alice_self_wrapped),
             "creator_thread_pubkey": browser::b64(&creator_thread.public_key),
             "provenance_sig": browser::b64(&prov_sig),
+            "creator_create_ts": create_ts,
+            "creator_create_sig": browser::b64(&create_sig),
         }))
         .send()
         .await
@@ -110,6 +120,15 @@ async fn room_e2ee_roundtrip_with_provenance() {
 
     // 4. Alice wraps the room key for Bob (recording the invite chain).
     let bob_wrapped = browser::seal_room_key(&room_key, &bob.box_pub);
+    let room_id_bytes_for_wrap = browser::unb64(&create_resp.room_id);
+    let wrap_ts = time::OffsetDateTime::now_utc().unix_timestamp();
+    let wrap_sig = browser::sign_wrap_request(
+        &room_id_bytes_for_wrap,
+        &bob.box_pub,
+        &bob_wrapped,
+        wrap_ts,
+        &alice.sig_priv,
+    );
     let wrap_resp = client
         .post(format!(
             "{}/api/rooms/{}/wrap",
@@ -119,6 +138,9 @@ async fn room_e2ee_roundtrip_with_provenance() {
             "for_box_pubkey": browser::b64(&bob.box_pub),
             "wrapped_key": browser::b64(&bob_wrapped),
             "inviter_box_pubkey": browser::b64(&alice.box_pub),
+            "inviter_sig_pubkey": browser::b64(&alice.sig_pub),
+            "inviter_ts": wrap_ts,
+            "inviter_sig": browser::b64(&wrap_sig),
         }))
         .send()
         .await
@@ -212,12 +234,22 @@ async fn rejects_non_member_message() {
     let alice = browser::new_member_keys();
     let room_key = browser::random_room_key();
     let alice_self_wrapped = browser::seal_room_key(&room_key, &alice.box_pub);
+    let create_ts = time::OffsetDateTime::now_utc().unix_timestamp();
+    let create_sig = browser::sign_create_room(
+        &alice.box_pub,
+        &alice.sig_pub,
+        &alice_self_wrapped,
+        create_ts,
+        &alice.sig_priv,
+    );
     let create: CreateRoomResp = client
         .post(format!("{}/api/rooms", s.base_url))
         .json(&json!({
             "creator_box_pubkey": browser::b64(&alice.box_pub),
             "creator_sig_pubkey": browser::b64(&alice.sig_pub),
             "wrapped_key_for_creator": browser::b64(&alice_self_wrapped),
+            "creator_create_ts": create_ts,
+            "creator_create_sig": browser::b64(&create_sig),
         }))
         .send()
         .await
