@@ -120,6 +120,14 @@ pub fn router(state: AppState) -> Router {
     let static_dir = std::env::var("LETHE_STATIC_DIR")
         .unwrap_or_else(|_| "crates/lethe-server/static".to_string());
 
+    // DELIBERATELY no `tower_http::trace::TraceLayer` here. Request URIs
+    // carry secrets — invite codes (`/r/join/:code`,
+    // `/api/rooms/by-invite/:code/...`), room ids, and thread ids — so
+    // any per-request access log would write those into journald and
+    // defeat the "server retains as little as possible" model. If you
+    // ever need request tracing, scrub the URI first; do not add a bare
+    // TraceLayer. The default `RUST_LOG` keeps `tower_http` at `warn`
+    // so an accidental layer stays quiet at info level too.
     let mut app = Router::new()
         .route("/healthz", get(healthz))
         .merge(pages)
@@ -138,9 +146,10 @@ pub fn router(state: AppState) -> Router {
     app
 }
 
-pub async fn build_state(cfg: Config) -> Result<AppState, sqlx::Error> {
+pub async fn build_state(cfg: Config) -> Result<AppState, Box<dyn std::error::Error>> {
     let db: PgPool = db::connect(&cfg.database_url).await?;
-    let identity = Arc::new(federation::Identity::load_or_create(&db).await?);
+    let identity =
+        Arc::new(federation::Identity::load_or_create(&db, &cfg.server_key_path).await?);
     Ok(AppState {
         db,
         cfg,

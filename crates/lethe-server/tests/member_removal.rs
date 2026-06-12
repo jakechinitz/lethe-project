@@ -20,12 +20,22 @@ async fn create_room_with_two_members(
     let alice = browser::new_member_keys();
     let room_key = browser::random_room_key();
     let alice_self = browser::seal_room_key(&room_key, &alice.box_pub);
+    let create_ts = time::OffsetDateTime::now_utc().unix_timestamp();
+    let create_sig = browser::sign_create_room(
+        &alice.box_pub,
+        &alice.sig_pub,
+        &alice_self,
+        create_ts,
+        &alice.sig_priv,
+    );
     let create: CreateRoomResp = client
         .post(format!("{base_url}/api/rooms"))
         .json(&json!({
             "creator_box_pubkey": browser::b64(&alice.box_pub),
             "creator_sig_pubkey": browser::b64(&alice.sig_pub),
             "wrapped_key_for_creator": browser::b64(&alice_self),
+            "creator_create_ts": create_ts,
+            "creator_create_sig": browser::b64(&create_sig),
         }))
         .send()
         .await
@@ -48,12 +58,24 @@ async fn create_room_with_two_members(
         .await
         .unwrap();
     let bob_wrapped = browser::seal_room_key(&room_key, &bob.box_pub);
+    let room_id_bytes = browser::unb64(&create.room_id);
+    let wrap_ts = time::OffsetDateTime::now_utc().unix_timestamp();
+    let wrap_sig = browser::sign_wrap_request(
+        &room_id_bytes,
+        &bob.box_pub,
+        &bob_wrapped,
+        wrap_ts,
+        &alice.sig_priv,
+    );
     client
         .post(format!("{base_url}/api/rooms/{}/wrap", create.room_id))
         .json(&json!({
             "for_box_pubkey": browser::b64(&bob.box_pub),
             "wrapped_key": browser::b64(&bob_wrapped),
             "inviter_box_pubkey": browser::b64(&alice.box_pub),
+            "inviter_sig_pubkey": browser::b64(&alice.sig_pub),
+            "inviter_ts": wrap_ts,
+            "inviter_sig": browser::b64(&wrap_sig),
         }))
         .send()
         .await
@@ -85,12 +107,23 @@ async fn creator_removes_member_and_rekeys() {
         .await
         .unwrap();
     let charlie_wrapped = browser::seal_room_key(&old_key, &charlie.box_pub);
+    let charlie_wrap_ts = time::OffsetDateTime::now_utc().unix_timestamp();
+    let charlie_wrap_sig = browser::sign_wrap_request(
+        &room_id_bytes,
+        &charlie.box_pub,
+        &charlie_wrapped,
+        charlie_wrap_ts,
+        &alice.sig_priv,
+    );
     client
         .post(format!("{}/api/rooms/{}/wrap", s.base_url, create.room_id))
         .json(&json!({
             "for_box_pubkey": browser::b64(&charlie.box_pub),
             "wrapped_key": browser::b64(&charlie_wrapped),
             "inviter_box_pubkey": browser::b64(&alice.box_pub),
+            "inviter_sig_pubkey": browser::b64(&alice.sig_pub),
+            "inviter_ts": charlie_wrap_ts,
+            "inviter_sig": browser::b64(&charlie_wrap_sig),
         }))
         .send()
         .await

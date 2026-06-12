@@ -15,6 +15,13 @@ pub fn headers() -> &'static [(&'static str, &'static str)] {
         ("x-frame-options", "DENY"),
         ("permissions-policy", PERMISSIONS_POLICY),
         ("cross-origin-opener-policy", "same-origin"),
+        // Refuse to let any other origin load our responses as a
+        // no-cors subresource (`<img>`, `<script>`, etc.). With COOP
+        // above, this puts the document in a cross-origin-isolated
+        // context and closes the Spectre-class cross-origin read
+        // surface. Everything we serve is same-origin, so this never
+        // rejects a legitimate request.
+        ("cross-origin-resource-policy", "same-origin"),
     ]
 }
 

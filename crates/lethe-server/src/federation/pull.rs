@@ -39,6 +39,22 @@ use std::time::Duration;
 /// fixed string is preferable to the default per-build UA.
 pub(crate) const USER_AGENT: &str = "Lethe-Federation/lethe-fed-v1";
 
+/// Hard ceiling on the bytes we'll buffer from a single peer pull
+/// response. `route::EVENTS_PAGE_LIMIT` (200) bounds events we serve;
+/// each post body is ≤16 KiB (`logic::posts::MAX_BODY`) and an event
+/// envelope adds another ~2 KiB of base64 fields. 8 MiB leaves an
+/// order-of-magnitude headroom over the legitimate maximum without
+/// letting a hostile peer balloon DB inserts. Anything bigger is
+/// dropped before deserialization.
+const MAX_PULL_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
+
+/// Random jitter applied to each pull cycle so a passive observer
+/// can't fingerprint this server by the cadence of its outbound
+/// requests. Picked as a fraction of the configured interval; the
+/// fixed User-Agent above neutralizes per-build identity, this
+/// neutralizes per-schedule identity.
+const PULL_JITTER_FRACTION: f64 = 0.20;
+
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct StoredCursor {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -54,16 +70,28 @@ pub fn spawn(
     interval: Duration,
 ) {
     tokio::spawn(async move {
-        let mut tick = tokio::time::interval(interval);
-        // First tick fires immediately; we let it, so first-pull
-        // happens at startup rather than after one full interval.
+        // First pull happens at startup; subsequent pulls wait
+        // `interval ± PULL_JITTER_FRACTION * interval`.
         loop {
-            tick.tick().await;
             if let Err(e) = run_once(&db, &identity, classifier.as_ref()).await {
                 tracing::warn!(error = ?e, "federation pull cycle failed");
             }
+            tokio::time::sleep(jittered_interval(interval)).await;
         }
     });
+}
+
+/// Returns `interval` perturbed by a uniform random value in
+/// `[-PULL_JITTER_FRACTION, +PULL_JITTER_FRACTION] * interval`.
+/// Clamps to ≥1s so a tiny configured interval can't collapse to
+/// zero and busy-loop.
+fn jittered_interval(interval: Duration) -> Duration {
+    use rand::Rng as _;
+    let base = interval.as_secs_f64();
+    let delta = base * PULL_JITTER_FRACTION;
+    let jitter = rand::thread_rng().gen_range(-delta..=delta);
+    let secs = (base + jitter).max(1.0);
+    Duration::from_secs_f64(secs)
 }
 
 #[derive(Debug, Default)]
@@ -122,7 +150,29 @@ pub async fn run_once(
             tracing::warn!(status = %resp.status(), peer = %peer.endpoint, "non-success");
             continue;
         }
-        let body: events::EventsResponse = match resp.json().await {
+        // Reject early if the peer announces a body larger than our
+        // ceiling, before we buffer anything in memory.
+        if let Some(len) = resp.content_length() {
+            if len as usize > MAX_PULL_RESPONSE_BYTES {
+                tracing::warn!(
+                    content_length = len,
+                    peer = %peer.endpoint,
+                    "rejecting oversized response"
+                );
+                continue;
+            }
+        }
+        // Stream into a bounded buffer so a peer that lies about (or
+        // omits) Content-Length can't make us swallow more than
+        // `MAX_PULL_RESPONSE_BYTES`.
+        let bytes = match read_bounded(resp, MAX_PULL_RESPONSE_BYTES).await {
+            Ok(b) => b,
+            Err(e) => {
+                tracing::warn!(error = %e, peer = %peer.endpoint, "fetch body failed");
+                continue;
+            }
+        };
+        let body: events::EventsResponse = match serde_json::from_slice(&bytes) {
             Ok(b) => b,
             Err(e) => {
                 tracing::warn!(error = %e, peer = %peer.endpoint, "decode failed");
@@ -221,6 +271,25 @@ fn urlencode(s: &str) -> String {
             _ => format!("%{b:02X}"),
         })
         .collect()
+}
+
+/// Reads the response body into a `Vec`, aborting as soon as the
+/// accumulated size exceeds `max_bytes`. Avoids a malicious peer
+/// streaming gigabytes through the inflight 10s window.
+async fn read_bounded(
+    mut resp: reqwest::Response,
+    max_bytes: usize,
+) -> Result<Vec<u8>, &'static str> {
+    let mut buf = Vec::with_capacity(8 * 1024);
+    loop {
+        let chunk = resp.chunk().await.map_err(|_| "transport")?;
+        let Some(chunk) = chunk else { break };
+        if buf.len() + chunk.len() > max_bytes {
+            return Err("response exceeds size ceiling");
+        }
+        buf.extend_from_slice(&chunk);
+    }
+    Ok(buf)
 }
 
 /// Returns Ok(true) if the post was newly accepted, Ok(false) if it was
@@ -339,11 +408,12 @@ fn base64_decode_32(s: &str) -> Result<[u8; 32], &'static str> {
 
 /// Re-implementation of crypto::verify_post_signature without taking a
 /// dep on that module's error type — the federation worker logs and
-/// drops, it doesn't need a structured `AppError`.
+/// drops, it doesn't need a structured `AppError`. Uses `verify_strict`
+/// to match crypto.rs and reject malleable signature encodings.
 fn ed25519_verify(pubkey: &[u8; 32], sig: &[u8; 64], msg: &[u8]) -> Result<(), &'static str> {
-    use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+    use ed25519_dalek::{Signature, VerifyingKey};
     let vk = VerifyingKey::from_bytes(pubkey).map_err(|_| "bad pubkey")?;
-    vk.verify(msg, &Signature::from_bytes(sig))
+    vk.verify_strict(msg, &Signature::from_bytes(sig))
         .map_err(|_| "verify failed")
 }
 

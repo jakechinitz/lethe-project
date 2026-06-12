@@ -16,12 +16,22 @@ async fn room_caps_at_fifty_active_members() {
     let alice = browser::new_member_keys();
     let room_key = browser::random_room_key();
     let alice_self = browser::seal_room_key(&room_key, &alice.box_pub);
+    let create_ts = time::OffsetDateTime::now_utc().unix_timestamp();
+    let create_sig = browser::sign_create_room(
+        &alice.box_pub,
+        &alice.sig_pub,
+        &alice_self,
+        create_ts,
+        &alice.sig_priv,
+    );
     let create: CreateRoomResp = client
         .post(format!("{}/api/rooms", s.base_url))
         .json(&json!({
             "creator_box_pubkey": browser::b64(&alice.box_pub),
             "creator_sig_pubkey": browser::b64(&alice.sig_pub),
             "wrapped_key_for_creator": browser::b64(&alice_self),
+            "creator_create_ts": create_ts,
+            "creator_create_sig": browser::b64(&create_sig),
         }))
         .send()
         .await

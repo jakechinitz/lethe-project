@@ -69,6 +69,14 @@ async fn restricted_invite_lets_only_allowlisted_anons_join() {
     let alice_member = browser::new_member_keys();
     let room_key = browser::random_room_key();
     let alice_self = browser::seal_room_key(&room_key, &alice_member.box_pub);
+    let create_ts = time::OffsetDateTime::now_utc().unix_timestamp();
+    let create_sig = browser::sign_create_room(
+        &alice_member.box_pub,
+        &alice_member.sig_pub,
+        &alice_self,
+        create_ts,
+        &alice_member.sig_priv,
+    );
     let create: CreateRoomResp = client
         .post(format!("{}/api/rooms", s.base_url))
         .json(&json!({
@@ -77,6 +85,8 @@ async fn restricted_invite_lets_only_allowlisted_anons_join() {
             "creator_sig_pubkey": browser::b64(&alice_member.sig_pub),
             "wrapped_key_for_creator": browser::b64(&alice_self),
             "allowlist_thread_pubkeys": [browser::b64(&bob_thread.public_key)],
+            "creator_create_ts": create_ts,
+            "creator_create_sig": browser::b64(&create_sig),
         }))
         .send()
         .await
@@ -207,6 +217,14 @@ async fn restricted_invite_rejects_stale_proof() {
     let alice_member = browser::new_member_keys();
     let room_key = browser::random_room_key();
     let alice_self = browser::seal_room_key(&room_key, &alice_member.box_pub);
+    let create_ts = time::OffsetDateTime::now_utc().unix_timestamp();
+    let create_sig = browser::sign_create_room(
+        &alice_member.box_pub,
+        &alice_member.sig_pub,
+        &alice_self,
+        create_ts,
+        &alice_member.sig_priv,
+    );
     let create: CreateRoomResp = client
         .post(format!("{}/api/rooms", s.base_url))
         .json(&json!({
@@ -215,6 +233,8 @@ async fn restricted_invite_rejects_stale_proof() {
             "creator_sig_pubkey": browser::b64(&alice_member.sig_pub),
             "wrapped_key_for_creator": browser::b64(&alice_self),
             "allowlist_thread_pubkeys": [browser::b64(&bob_thread.public_key)],
+            "creator_create_ts": create_ts,
+            "creator_create_sig": browser::b64(&create_sig),
         }))
         .send()
         .await
@@ -260,6 +280,14 @@ async fn create_with_allowlist_pubkey_not_in_thread_is_rejected() {
     let alice_self = browser::seal_room_key(&room_key, &alice_member.box_pub);
     // Random key that never signed anything anywhere.
     let bogus = browser::new_thread_identity();
+    let create_ts = time::OffsetDateTime::now_utc().unix_timestamp();
+    let create_sig = browser::sign_create_room(
+        &alice_member.box_pub,
+        &alice_member.sig_pub,
+        &alice_self,
+        create_ts,
+        &alice_member.sig_priv,
+    );
     let resp = client
         .post(format!("{}/api/rooms", s.base_url))
         .json(&json!({
@@ -268,6 +296,8 @@ async fn create_with_allowlist_pubkey_not_in_thread_is_rejected() {
             "creator_sig_pubkey": browser::b64(&alice_member.sig_pub),
             "wrapped_key_for_creator": browser::b64(&alice_self),
             "allowlist_thread_pubkeys": [browser::b64(&bogus.public_key)],
+            "creator_create_ts": create_ts,
+            "creator_create_sig": browser::b64(&create_sig),
         }))
         .send()
         .await

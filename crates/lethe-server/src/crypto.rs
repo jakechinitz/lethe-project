@@ -96,6 +96,36 @@ pub fn verify_room_message_sender(
     verify_ed25519(sender_sig_pubkey, sender_sig, &payload)
 }
 
+/// Verifies the signature on `POST /api/rooms` from the room creator.
+pub fn verify_create_room(
+    creator_sig_pubkey: &[u8],
+    sig: &[u8],
+    creator_box_pubkey: &[u8],
+    wrapped_key_for_creator: &[u8],
+    ts: i64,
+) -> Result<(), CryptoError> {
+    let payload = rooms::canonical_create_room(
+        creator_box_pubkey,
+        creator_sig_pubkey,
+        wrapped_key_for_creator,
+        ts,
+    );
+    verify_ed25519(creator_sig_pubkey, sig, &payload)
+}
+
+/// Verifies the signature on `POST /api/rooms/:room_id/wrap`.
+pub fn verify_wrap_request(
+    inviter_sig_pubkey: &[u8],
+    sig: &[u8],
+    room_id: &[u8],
+    for_box_pubkey: &[u8],
+    wrapped_key: &[u8],
+    ts: i64,
+) -> Result<(), CryptoError> {
+    let payload = rooms::canonical_wrap_request(room_id, for_box_pubkey, wrapped_key, ts);
+    verify_ed25519(inviter_sig_pubkey, sig, &payload)
+}
+
 fn verify_ed25519(pubkey: &[u8], sig: &[u8], msg: &[u8]) -> Result<(), CryptoError> {
     let pk_arr: [u8; 32] = pubkey.try_into().map_err(|_| CryptoError::BadPubkey)?;
     let sig_arr: [u8; 64] = sig.try_into().map_err(|_| CryptoError::BadSignature)?;

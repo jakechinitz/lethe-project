@@ -1,6 +1,7 @@
 //! Environment-driven config. Read once at startup, never mutated.
 
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::time::Duration;
 
 #[derive(Debug, Clone)]
@@ -8,6 +9,13 @@ pub struct Config {
     pub database_url: String,
     pub bind_addr: SocketAddr,
     pub default_pow_bits: u8,
+    /// Path to the 32-byte Ed25519 seed file for this server's
+    /// federation identity. Must be a regular file with mode 0600
+    /// owned by the user the server runs as. The file is created on
+    /// first boot if absent; if `instance_identity.server_privkey`
+    /// holds a legacy seed it is migrated into this file once and
+    /// then NULLed in the database. See [`federation::identity`].
+    pub server_key_path: PathBuf,
     /// When true, spawn the federation pull worker at startup. When
     /// false, the federation routes are still mounted (so peers can
     /// still pull *from* this server) but no outbound pulls happen.
@@ -45,6 +53,9 @@ impl Config {
             .unwrap_or_else(|_| "18".to_string())
             .parse()
             .map_err(|e| format!("DEFAULT_BOARD_POW_BITS: {e}"))?;
+        let server_key_path: PathBuf = std::env::var("LETHE_SERVER_KEY_PATH")
+            .unwrap_or_else(|_| "./server-key".to_string())
+            .into();
         let federation_enabled: bool = std::env::var("LETHE_FEDERATION_ENABLED")
             .map(|s| matches!(s.to_ascii_lowercase().as_str(), "1" | "true" | "yes"))
             .unwrap_or(false);
@@ -66,6 +77,7 @@ impl Config {
             database_url,
             bind_addr,
             default_pow_bits,
+            server_key_path,
             federation_enabled,
             pull_interval,
             pull_horizon_days,

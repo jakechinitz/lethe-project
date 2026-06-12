@@ -250,3 +250,46 @@ pub fn sign_message_envelope(
     crypto_sign_detached(&mut sig, &payload, sk).expect("sign");
     sig
 }
+
+pub fn sign_create_room(
+    creator_box_pubkey: &[u8],
+    creator_sig_pubkey: &[u8],
+    wrapped_key_for_creator: &[u8],
+    ts: i64,
+    sk: &SigningSecretKey,
+) -> Signature {
+    let mut payload = Vec::with_capacity(
+        16 + 8
+            + creator_box_pubkey.len()
+            + creator_sig_pubkey.len()
+            + wrapped_key_for_creator.len(),
+    );
+    payload.extend_from_slice(b"lethe-create-v1\x00");
+    payload.extend_from_slice(&ts.to_le_bytes());
+    payload.extend_from_slice(creator_box_pubkey);
+    payload.extend_from_slice(creator_sig_pubkey);
+    payload.extend_from_slice(wrapped_key_for_creator);
+    let mut sig: Signature = [0u8; 64];
+    crypto_sign_detached(&mut sig, &payload, sk).expect("sign");
+    sig
+}
+
+pub fn sign_wrap_request(
+    room_id: &[u8],
+    for_box_pubkey: &[u8],
+    wrapped_key: &[u8],
+    ts: i64,
+    sk: &SigningSecretKey,
+) -> Signature {
+    let mut payload = Vec::with_capacity(
+        14 + 8 + room_id.len() + for_box_pubkey.len() + wrapped_key.len(),
+    );
+    payload.extend_from_slice(b"lethe-wrap-v1\x00");
+    payload.extend_from_slice(&ts.to_le_bytes());
+    payload.extend_from_slice(room_id);
+    payload.extend_from_slice(for_box_pubkey);
+    payload.extend_from_slice(wrapped_key);
+    let mut sig: Signature = [0u8; 64];
+    crypto_sign_detached(&mut sig, &payload, sk).expect("sign");
+    sig
+}

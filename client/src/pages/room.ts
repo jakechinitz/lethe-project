@@ -301,12 +301,24 @@ async function maybeGrantPending(keys: roomkey.RoomKeys, members: MemberView[]):
     if (m.removed_at) continue;
     if (m.wrapped_key) continue;
     if (m.box_pubkey === myB64) continue;
-    const wrapped = await roomkey.wrapRoomKey(currentKey, b64decode(m.box_pubkey));
+    const forBox = b64decode(m.box_pubkey);
+    const wrapped = await roomkey.wrapRoomKey(currentKey, forBox);
+    const ts = Math.floor(Date.now() / 1000);
+    const sig = await roomkey.signWrapRequest(
+      roomIdBytes,
+      forBox,
+      wrapped,
+      ts,
+      keys.sigPriv,
+    );
     try {
       await api.wrap(roomIdB64, {
         for_box_pubkey: m.box_pubkey,
         wrapped_key: b64encode(wrapped),
         inviter_box_pubkey: b64encode(keys.boxPub),
+        inviter_sig_pubkey: b64encode(keys.sigPub),
+        inviter_ts: ts,
+        inviter_sig: b64encode(sig),
       });
     } catch {
       // Race: another member granted first; ignore.
