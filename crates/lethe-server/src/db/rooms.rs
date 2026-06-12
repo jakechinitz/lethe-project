@@ -64,6 +64,9 @@ pub struct RoomMeta {
     pub provenance_sig: Option<Vec<u8>>,
     pub created_at: Date,
     pub allowlist_thread_pubkeys: Option<Vec<Vec<u8>>>,
+    /// Server-side ciphertext lifetime; surfaced to clients so the UI
+    /// can tell members how long messages stay fetchable.
+    pub message_retention_days: i16,
 }
 
 type RoomMetaTuple = (
@@ -73,10 +76,19 @@ type RoomMetaTuple = (
     Option<Vec<u8>>,
     Date,
     Option<Vec<Vec<u8>>>,
+    i16,
 );
 
 fn meta_from_tuple(t: RoomMetaTuple) -> RoomMeta {
-    let (id, origin_thread, creator_thread_pubkey, provenance_sig, created_at, allowlist) = t;
+    let (
+        id,
+        origin_thread,
+        creator_thread_pubkey,
+        provenance_sig,
+        created_at,
+        allowlist,
+        message_retention_days,
+    ) = t;
     RoomMeta {
         id,
         origin_thread,
@@ -84,13 +96,14 @@ fn meta_from_tuple(t: RoomMetaTuple) -> RoomMeta {
         provenance_sig,
         created_at,
         allowlist_thread_pubkeys: allowlist,
+        message_retention_days,
     }
 }
 
 pub async fn meta_by_id(db: &PgPool, id: &[u8]) -> Result<Option<RoomMeta>, sqlx::Error> {
     let row: Option<RoomMetaTuple> = sqlx::query_as(
         "SELECT id, origin_thread, creator_thread_pubkey, provenance_sig, created_at,
-                allowlist_thread_pubkeys
+                allowlist_thread_pubkeys, message_retention_days
          FROM rooms WHERE id = $1",
     )
     .bind(id)
@@ -102,7 +115,7 @@ pub async fn meta_by_id(db: &PgPool, id: &[u8]) -> Result<Option<RoomMeta>, sqlx
 pub async fn meta_by_invite(db: &PgPool, code: &str) -> Result<Option<RoomMeta>, sqlx::Error> {
     let row: Option<RoomMetaTuple> = sqlx::query_as(
         "SELECT id, origin_thread, creator_thread_pubkey, provenance_sig, created_at,
-                allowlist_thread_pubkeys
+                allowlist_thread_pubkeys, message_retention_days
          FROM rooms WHERE invite_code = $1",
     )
     .bind(code)

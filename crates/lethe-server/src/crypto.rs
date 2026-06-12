@@ -28,6 +28,18 @@ pub fn verify_post_signature(
     verify_ed25519(pubkey, signature, &payload)
 }
 
+/// Verifies an author's self-delete request against the pubkey stored
+/// on the post.
+pub fn verify_post_delete(
+    pubkey: &[u8],
+    sig: &[u8],
+    post_id: &[u8],
+    ts: i64,
+) -> Result<(), CryptoError> {
+    let payload = lethe_types::posts::canonical_delete_request(post_id, ts);
+    verify_ed25519(pubkey, sig, &payload)
+}
+
 /// Verifies the room-creation provenance signature.
 pub fn verify_room_provenance(
     creator_thread_pubkey: &[u8],

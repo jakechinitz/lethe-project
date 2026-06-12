@@ -106,6 +106,7 @@ async function tickMembers(): Promise<void> {
   const resp = await api.members(roomIdB64);
   memberCache = resp.members;
   currentEpoch = resp.current_epoch;
+  renderRetentionNote(resp.message_retention_days);
 
   // "I'm the creator" iff my box pubkey matches the member with no inviter.
   const creatorRow = resp.members.find((m) => !m.invited_by_box_pubkey);
@@ -118,6 +119,20 @@ async function tickMembers(): Promise<void> {
     await maybeUnwrap(keys, resp.members);
   }
   renderMembers(resp.members);
+}
+
+/// Replaces the template's placeholder with the room's actual
+/// server-side message lifetime, so members aren't surprised when
+/// history vanishes. Local copies in the browser are unaffected.
+function renderRetentionNote(days: number): void {
+  const note = document.querySelector<HTMLElement>("#retention-note");
+  if (!note) return;
+  const span = days === 1 ? "1 day" : `${days} days`;
+  note.textContent =
+    `Messages are automatically deleted from the server ${span} after ` +
+    `they're sent. What you've already loaded stays visible until you ` +
+    `close the page; nothing older than ${span} can be fetched again — ` +
+    `by you, the server operator, or anyone who seizes the server.`;
 }
 
 function renderMembers(members: MemberView[]): void {

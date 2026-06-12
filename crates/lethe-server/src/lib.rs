@@ -57,6 +57,7 @@ pub fn router(state: AppState) -> Router {
             post(routes::posts::create).get(routes::posts::list),
         )
         .route("/posts/:post_id/reports", post(routes::reports::create))
+        .route("/posts/:post_id/delete", post(routes::posts::delete))
         .route("/rooms", post(routes::rooms::create))
         .route(
             "/rooms/by-invite/:code/info",

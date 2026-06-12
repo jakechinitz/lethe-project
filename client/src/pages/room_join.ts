@@ -28,6 +28,16 @@ async function main(): Promise<void> {
     btn.disabled = true;
     return;
   }
+  // Tell the joiner up front how ephemeral this room's history is.
+  const note = document.querySelector<HTMLElement>("#retention-note");
+  if (note) {
+    const d = info.message_retention_days;
+    const span = d === 1 ? "1 day" : `${d} days`;
+    note.textContent =
+      `Heads up: messages in this room are automatically deleted from ` +
+      `the server ${span} after they're sent. Chat history is ephemeral ` +
+      `by design.`;
+  }
   if (!info.restricted) {
     text(status, "This is an open invite. Click below to request access.");
     return;

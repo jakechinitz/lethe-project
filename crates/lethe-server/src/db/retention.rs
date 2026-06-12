@@ -1,12 +1,23 @@
 //! Retention queries: delete public threads and private-room messages
-//! older than each board / room's configured retention_days.
+//! per the board / room / thread retention policy.
 //!
 //! Returns counts only; never logs which rows were deleted.
 //!
-//! Cutoff is `current_date - retention_days`: the comparison is exact at
-//! day granularity, matching the DATE columns it filters on. A row from
-//! yesterday with `retention_days = 0` is deleted; one from today is
-//! kept.
+//! Threads are deleted when EITHER:
+//!   * the author-set `threads.expires_at` has arrived
+//!     (`expires_at <= current_date`), or
+//!   * the board has a non-NULL `retention_days` and the thread is
+//!     older than `current_date - retention_days`.
+//!
+//! `boards.retention_days IS NULL` (the default since migration 0017)
+//! means board-wide pruning is off and threads persist until their own
+//! `expires_at`, if any. The SQL needs no special-casing: comparing
+//! against `current_date - NULL` is NULL, which is not TRUE, so the
+//! row survives.
+//!
+//! Cutoffs are exact at day granularity, matching the DATE columns
+//! they filter on. A row from yesterday with `retention_days = 0` is
+//! deleted; one from today is kept.
 
 use sqlx::PgPool;
 use time::Duration;
@@ -21,14 +32,17 @@ pub struct RetentionStats {
 pub async fn run_once(db: &PgPool) -> Result<RetentionStats, sqlx::Error> {
     let mut stats = RetentionStats::default();
 
-    // Threads (with their posts cascading via FK).
+    // Threads (with their posts cascading via FK). Author-set expiry
+    // OR board-level retention, whichever applies; NULL board
+    // retention disables the second arm entirely.
     let res = sqlx::query(
         "DELETE FROM threads
-         WHERE created_at <
-            current_date - (
-                SELECT retention_days
-                  FROM boards WHERE id = threads.board_id
-            )",
+         WHERE (expires_at IS NOT NULL AND expires_at <= current_date)
+            OR created_at <
+               current_date - (
+                   SELECT retention_days
+                     FROM boards WHERE id = threads.board_id
+               )",
     )
     .execute(db)
     .await?;

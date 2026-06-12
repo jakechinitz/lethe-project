@@ -52,6 +52,73 @@ async fn deletes_threads_past_retention() {
 }
 
 #[tokio::test]
+async fn null_board_retention_keeps_threads_forever() {
+    let s = support::spawn().await;
+
+    // Boards ship with retention_days = NULL since migration 0017 —
+    // confirm the seed actually is NULL, then prove an ancient thread
+    // survives the sweep.
+    let ret: (Option<i16>,) =
+        sqlx::query_as("SELECT retention_days FROM boards WHERE id = 'general'")
+            .fetch_one(&s.db)
+            .await
+            .unwrap();
+    assert!(ret.0.is_none(), "seeded board should default to NULL retention");
+
+    sqlx::query(
+        "INSERT INTO threads (id, board_id, title, created_at)
+         VALUES ($1, 'general', 'ancient', current_date - interval '3650 days')",
+    )
+    .bind(&[3u8; 16][..])
+    .execute(&s.db)
+    .await
+    .unwrap();
+
+    let stats = db::retention::run_once(&s.db).await.unwrap();
+    assert_eq!(stats.threads_deleted, 0);
+
+    let count: (i64,) = sqlx::query_as("SELECT count(*) FROM threads")
+        .fetch_one(&s.db)
+        .await
+        .unwrap();
+    assert_eq!(count.0, 1, "ancient thread must survive on a NULL-retention board");
+}
+
+#[tokio::test]
+async fn author_set_expiry_deletes_thread() {
+    let s = support::spawn().await;
+
+    // Two threads on the indefinite board: one whose author-set expiry
+    // has arrived, one expiring tomorrow.
+    sqlx::query(
+        "INSERT INTO threads (id, board_id, title, created_at, expires_at)
+         VALUES ($1, 'general', 'expired', current_date - interval '10 days', current_date)",
+    )
+    .bind(&[4u8; 16][..])
+    .execute(&s.db)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO threads (id, board_id, title, created_at, expires_at)
+         VALUES ($1, 'general', 'not-yet', current_date, current_date + interval '1 day')",
+    )
+    .bind(&[5u8; 16][..])
+    .execute(&s.db)
+    .await
+    .unwrap();
+
+    let stats = db::retention::run_once(&s.db).await.unwrap();
+    assert_eq!(stats.threads_deleted, 1);
+
+    let titles: Vec<(String,)> = sqlx::query_as("SELECT title FROM threads")
+        .fetch_all(&s.db)
+        .await
+        .unwrap();
+    assert_eq!(titles.len(), 1);
+    assert_eq!(titles[0].0, "not-yet");
+}
+
+#[tokio::test]
 async fn deletes_room_messages_past_retention() {
     let s = support::spawn().await;
 

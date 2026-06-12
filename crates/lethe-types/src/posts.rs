@@ -23,6 +23,12 @@ pub struct CreateThreadReq {
     /// `b"lethe-post-v1" || thread_id || body`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub signature: Option<B64>,
+    /// Author-chosen thread lifetime in days. `None` (the default)
+    /// means the thread never expires; a number means the retention
+    /// worker deletes the whole thread (posts cascade) once
+    /// `created_at + expires_in_days` arrives. 1..=3650.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_in_days: Option<i32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -84,6 +90,33 @@ pub fn canonical_post_payload(thread_id: &[u8], body: &str) -> Vec<u8> {
     buf.extend_from_slice(b"lethe-post-v1");
     buf.extend_from_slice(thread_id);
     buf.extend_from_slice(body.as_bytes());
+    buf
+}
+
+/// Body of `POST /api/posts/:post_id/delete`. Only the author of a
+/// *signed* post can delete it: the request must carry a fresh
+/// signature from the same Ed25519 key that signed the post. Fully
+/// anonymous posts have no key and therefore no owner who can prove
+/// the right to delete — they cannot be self-deleted.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeletePostReq {
+    /// Must equal the pubkey stored on the post.
+    pub pubkey: B64,
+    /// Unix timestamp (seconds). Server rejects if more than 60 s skew.
+    pub ts: i64,
+    /// Detached Ed25519 sig over `canonical_delete_request(post_id, ts)`.
+    pub sig: B64,
+}
+
+/// Canonical bytes the author signs to delete their own post:
+///   `b"lethe-delete-v1\0" || post_id || ts_le8`.
+/// Binding the post id stops one capture deleting a different post;
+/// binding ts + the request-nonce table stops replays.
+pub fn canonical_delete_request(post_id: &[u8], ts: i64) -> Vec<u8> {
+    let mut buf = Vec::with_capacity(16 + post_id.len() + 8);
+    buf.extend_from_slice(b"lethe-delete-v1\x00");
+    buf.extend_from_slice(post_id);
+    buf.extend_from_slice(&ts.to_le_bytes());
     buf
 }
 

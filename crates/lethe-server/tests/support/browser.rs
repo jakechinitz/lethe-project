@@ -82,6 +82,16 @@ pub fn sign_post(thread_id: &[u8], body: &str, sk: &SigningSecretKey) -> Signatu
     sig
 }
 
+pub fn sign_post_delete(post_id: &[u8], ts: i64, sk: &SigningSecretKey) -> Signature {
+    let mut payload = Vec::with_capacity(16 + post_id.len() + 8);
+    payload.extend_from_slice(b"lethe-delete-v1\x00");
+    payload.extend_from_slice(post_id);
+    payload.extend_from_slice(&ts.to_le_bytes());
+    let mut sig: Signature = [0u8; 64];
+    crypto_sign_detached(&mut sig, &payload, sk).expect("sign");
+    sig
+}
+
 pub fn sign_room_provenance(
     origin_thread: &[u8],
     creator_thread_pubkey: &[u8],

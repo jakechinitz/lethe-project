@@ -46,6 +46,12 @@
     <input type="checkbox" id="attach-provenance" checked>
     Attach thread provenance (sign with my identity from this thread)
   </label>
+  <p class="hint">
+    Room messages are <strong>ephemeral</strong>: the server deletes
+    their ciphertext 7 days after they're sent. Members can read
+    anything posted while they're in the room, but nothing older than
+    7 days can be fetched again.
+  </p>
   <button type="submit">Create room</button>
   <p class="status" id="create-status"></p>
 </form>
