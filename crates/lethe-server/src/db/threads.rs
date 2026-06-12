@@ -9,16 +9,18 @@ pub async fn create(
     board_id: &str,
     title: &str,
     created_at: Date,
+    expires_at: Option<Date>,
     origin_server_id: &[u8],
 ) -> Result<(), sqlx::Error> {
     sqlx::query(
-        "INSERT INTO threads (id, board_id, title, created_at, origin_server_id)
-         VALUES ($1, $2, $3, $4, $5)",
+        "INSERT INTO threads (id, board_id, title, created_at, expires_at, origin_server_id)
+         VALUES ($1, $2, $3, $4, $5, $6)",
     )
     .bind(id)
     .bind(board_id)
     .bind(title)
     .bind(created_at)
+    .bind(expires_at)
     .bind(origin_server_id)
     .execute(db)
     .await?;

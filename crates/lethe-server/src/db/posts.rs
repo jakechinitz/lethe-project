@@ -192,6 +192,65 @@ pub fn tombstone_body(reason: &str) -> String {
     format!("[removed: {reason}]")
 }
 
+/// The pubkey stored on a post, if any. Outer `None` = no such post;
+/// inner `None` = the post was fully anonymous (no thread identity).
+pub async fn author_pubkey(
+    db: &PgPool,
+    post_id: &[u8],
+) -> Result<Option<Option<Vec<u8>>>, sqlx::Error> {
+    let row: Option<(Option<Vec<u8>>,)> =
+        sqlx::query_as("SELECT pubkey FROM posts WHERE id = $1")
+            .bind(post_id)
+            .fetch_optional(db)
+            .await?;
+    Ok(row.map(|r| r.0))
+}
+
+/// Author self-delete, in one transaction:
+///   1. insert the `post_removals` tombstone row (scope `global` so
+///      federation peers replicate the takedown), and
+///   2. scrub the row's content: body, signature, pubkey, pow_nonce.
+///
+/// Step 2 is what makes this a real deletion rather than a hide — a
+/// later DB snapshot contains no trace of what was written or which
+/// thread-key wrote it. The row itself stays so per-thread `seq`
+/// numbering and `>>N` references remain stable.
+///
+/// Returns `false` if a removal row already existed (post was already
+/// removed by moderation or a previous self-delete).
+pub async fn author_delete(
+    db: &PgPool,
+    post_id: &[u8],
+    reason: &str,
+    removed_at: Date,
+) -> Result<bool, sqlx::Error> {
+    let mut tx = db.begin().await?;
+    let res = sqlx::query(
+        "INSERT INTO post_removals (post_id, reason, scope, removed_at)
+         VALUES ($1, $2, 'global', $3)
+         ON CONFLICT (post_id) DO NOTHING",
+    )
+    .bind(post_id)
+    .bind(reason)
+    .bind(removed_at)
+    .execute(&mut *tx)
+    .await?;
+    if res.rows_affected() == 0 {
+        tx.rollback().await?;
+        return Ok(false);
+    }
+    sqlx::query(
+        "UPDATE posts
+         SET body = '', signature = NULL, pubkey = NULL, pow_nonce = ''
+         WHERE id = $1",
+    )
+    .bind(post_id)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(true)
+}
+
 #[derive(sqlx::FromRow)]
 struct PostRow {
     id: Vec<u8>,

@@ -38,6 +38,8 @@ export const api = {
       method: "POST",
       body,
     }),
+  deletePost: (postId: string, body: unknown) =>
+    call<void>(`/api/posts/${postId}/delete`, { method: "POST", body }),
   createRoom: (body: unknown) =>
     call<{ room_id: string; invite_code: string }>("/api/rooms", { method: "POST", body }),
   inviteInfo: (inviteCode: string) =>
@@ -101,6 +103,7 @@ export interface MemberView {
 export interface MembersResp {
   members: MemberView[];
   current_epoch: number;
+  message_retention_days: number;
 }
 
 export interface ProvenanceView {
@@ -125,4 +128,5 @@ export interface InviteInfo {
   origin_thread?: string | null;
   restricted: boolean;
   allowlist_thread_pubkeys?: string[] | null;
+  message_retention_days: number;
 }

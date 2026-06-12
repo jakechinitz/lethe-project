@@ -259,20 +259,44 @@ storage is automatic — every successful POST persists. The server has
 no way to read room messages: each row stores opaque ciphertext, the
 24-byte XChaCha20-Poly1305 nonce, and the sender's Ed25519 signature.
 
+**Public threads persist indefinitely by default.** Ephemerality is an
+author-side choice: the new-thread form has a "Thread lifetime"
+selector (keep forever / 7 / 30 / 90 / 365 days), stored as
+`threads.expires_at`. Operators can additionally set a board-wide
+ceiling by giving `boards.retention_days` a value; it ships NULL
+(no board-wide pruning). The anonymity properties of public posts —
+Tor transport, no accounts, per-thread keys, date-only timestamps,
+random ids — do not degrade with age, so the durable public record
+costs nothing in user privacy. What grows is the *operator's* exposure
+to legal demands for takedown of old content; weigh that for your
+jurisdiction.
+
+**Room messages stay ephemeral** (`message_retention_days`, default
+7 days): rooms have no forward secrecy, so minimizing retained
+ciphertext is the mitigation. The room page, join page, and create
+page all surface this so it's never a surprise.
+
 A background **retention worker** runs every hour and deletes:
 
-- threads whose `created_at` exceeds the board's `retention_days`
-  (default 30 days)
-- room messages whose `created_at` exceeds the room's
-  `message_retention_days` (default 7 days)
+- threads whose author-set `expires_at` has arrived
+- threads older than the board's `retention_days`, where set
+- room messages older than the room's `message_retention_days`
 
-These columns are configurable per-board / per-room — operators pick
-their own ceiling. The defaults are deliberately short so the server
-holds as little as possible. There are no automated backups; if you
-want them, point a sidecar at `pg_dump` with off-box encrypted storage.
+## Deleting your own post
 
-There is no automatic data export and no user-facing "delete my
-posts" — the retention sweep is the only deletion path.
+A post signed with a thread-local identity can be deleted by its
+author: the post's key signs `b"lethe-delete-v1\0" || post_id ||
+ts_le8` and POSTs to `/api/posts/:post_id/delete`. The server verifies
+the signature against the pubkey stored on the post, then scrubs the
+body, signature, and pubkey from the row, leaving a
+`[removed: deleted by author]` tombstone (the row survives so
+per-thread `seq` numbering and `>>N` references stay stable). The
+removal is scope-`global`, so federation peers replicate the takedown
+through the same signed removals stream used by moderation.
+
+Fully anonymous posts cannot be self-deleted — with no key on the
+post, no one can prove they wrote it. That trade-off is inherent:
+claiming a thread identity is what buys you the right to retract.
 
 ## systemd
 

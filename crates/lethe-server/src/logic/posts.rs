@@ -10,6 +10,9 @@ use sqlx::PgPool;
 
 const MAX_TITLE: usize = 256;
 const MAX_BODY: usize = 16 * 1024;
+/// Upper bound on author-set thread expiry (~10 years). Mostly a
+/// sanity rail against typos; NULL/absent means "never".
+const MAX_EXPIRES_IN_DAYS: i32 = 3650;
 
 pub async fn create_thread(
     db: &PgPool,
@@ -68,15 +71,34 @@ pub async fn create_thread(
         _ => return Err(AppError::BadRequest("pubkey/signature must come together")),
     };
 
+    // Author-set expiry: optional; converted to an absolute DATE at
+    // creation so the retention worker needs no arithmetic per sweep.
     let now = ltime::today_utc();
-    db::threads::create(db, &thread_id_vec, &req.board_id, &req.title, now, server_pubkey)
-        .await
-        .map_err(|e| match &e {
-            sqlx::Error::Database(d) if d.constraint() == Some("threads_pkey") => {
-                AppError::Conflict("thread_id already exists")
-            }
-            _ => AppError::Db(e),
-        })?;
+    let expires_at = match req.expires_in_days {
+        None => None,
+        Some(d) if (1..=MAX_EXPIRES_IN_DAYS).contains(&d) => Some(
+            time::Date::from_julian_day(now.to_julian_day().saturating_add(d))
+                .map_err(|_| AppError::BadRequest("expires_in_days"))?,
+        ),
+        Some(_) => return Err(AppError::BadRequest("expires_in_days out of range")),
+    };
+
+    db::threads::create(
+        db,
+        &thread_id_vec,
+        &req.board_id,
+        &req.title,
+        now,
+        expires_at,
+        server_pubkey,
+    )
+    .await
+    .map_err(|e| match &e {
+        sqlx::Error::Database(d) if d.constraint() == Some("threads_pkey") => {
+            AppError::Conflict("thread_id already exists")
+        }
+        _ => AppError::Db(e),
+    })?;
     let inserted = db::posts::insert(
         db,
         db::posts::NewPost {
@@ -176,6 +198,70 @@ pub async fn create_post(
         seq: inserted.seq,
         signer_first_seq,
     })
+}
+
+/// Author self-delete. The request must be signed by the same Ed25519
+/// key that signed the post; fully anonymous posts cannot be deleted
+/// (nobody can prove they wrote them — that's the price of posting
+/// without a thread identity).
+///
+/// Deletion is real: the body, signature, and pubkey are scrubbed from
+/// the row, and a `post_removals` tombstone (scope `global`) is written
+/// so federation peers replicate the takedown through the existing
+/// removals stream.
+pub async fn delete_post(
+    db: &PgPool,
+    post_id_b64: &str,
+    req: DeletePostReq,
+) -> AppResult<()> {
+    let post_id =
+        ids::unb64(post_id_b64).map_err(|_| AppError::BadRequest("post_id b64"))?;
+    if post_id.len() != 16 {
+        return Err(AppError::BadRequest("post_id length"));
+    }
+    let pubkey = ids::unb64(&req.pubkey).map_err(|_| AppError::BadRequest("pubkey b64"))?;
+    if pubkey.len() != 32 {
+        return Err(AppError::BadRequest("pubkey length"));
+    }
+    let sig = ids::unb64(&req.sig).map_err(|_| AppError::BadRequest("sig b64"))?;
+    if sig.len() != 64 {
+        return Err(AppError::BadRequest("sig length"));
+    }
+
+    let now_ts = time::OffsetDateTime::now_utc().unix_timestamp();
+    if (now_ts - req.ts).abs() > 60 {
+        return Err(AppError::BadRequest("ts outside ±60s window"));
+    }
+    crypto::verify_post_delete(&pubkey, &sig, &post_id, req.ts)?;
+
+    if !db::nonces::record(db, "postdel", &pubkey, req.ts).await? {
+        return Err(AppError::Conflict("replay: this signature was already used"));
+    }
+
+    // Ownership: the post must exist, must be signed, and the stored
+    // pubkey must match the one that just proved control.
+    match db::posts::author_pubkey(db, &post_id).await? {
+        None => return Err(AppError::NotFound),
+        Some(None) => {
+            return Err(AppError::Forbidden(
+                "anonymous posts cannot be self-deleted",
+            ))
+        }
+        Some(Some(stored)) if stored == pubkey => {}
+        Some(Some(_)) => {
+            return Err(AppError::Forbidden(
+                "pubkey does not match the post author",
+            ))
+        }
+    }
+
+    let now = ltime::today_utc();
+    let deleted =
+        db::posts::author_delete(db, &post_id, "deleted by author", now).await?;
+    if !deleted {
+        return Err(AppError::Conflict("post is already removed"));
+    }
+    Ok(())
 }
 
 pub async fn list_posts(

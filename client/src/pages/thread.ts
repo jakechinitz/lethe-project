@@ -66,8 +66,19 @@ replyForm.addEventListener("submit", async (ev) => {
   }
 });
 
+/// b64 pubkey of this browser's thread identity, or null when no
+/// identity is claimed. Loaded once per refresh so renderPost can put
+/// a Delete button on the user's own signed posts.
+let myPubkeyB64: string | null = null;
+
 async function refresh(): Promise<void> {
   try {
+    if (tkey.hasKeypair(threadIdB64)) {
+      const kp = await tkey.getOrCreateKeypair(threadIdB64);
+      myPubkeyB64 = b64encode(kp.publicKey);
+    } else {
+      myPubkeyB64 = null;
+    }
     const { posts } = await api.listPosts(threadIdB64, 0);
     render(posts);
   } catch (e) {
@@ -222,6 +233,15 @@ function renderPost(
   const metaChildren: Array<Node | string> = [
     author, " · ", seqLink, " · ", ts, " · ", replyBtn, " · ", reportBtn,
   ];
+
+  // Delete button: only on posts signed by this browser's thread key.
+  // Anonymous posts can't be deleted by anyone — there's no key that
+  // can prove authorship.
+  if (myPubkeyB64 && p.pubkey === myPubkeyB64) {
+    const deleteBtn = el("button", { type: "button", class: "delete-btn" }, ["Delete"]);
+    deleteBtn.addEventListener("click", () => void onDeletePost(p));
+    metaChildren.push(" · ", deleteBtn);
+  }
   if (p.origin_server_id) {
     const labelText =
       p.origin_server_label ?? `${p.origin_server_id.slice(0, 8)}…`;
@@ -237,6 +257,34 @@ function renderPost(
   article.appendChild(meta_);
   article.appendChild(body);
   return article;
+}
+
+/// Author self-delete: signs `lethe-delete-v1 || post_id || ts` with
+/// the thread key and POSTs it. The server scrubs the body, signature,
+/// and pubkey from the row and leaves a "[removed: deleted by author]"
+/// tombstone; on a federated network the takedown propagates to peers.
+async function onDeletePost(p: PostView): Promise<void> {
+  if (!confirm(
+      "Delete this post? The text is permanently removed from the server " +
+        "and a “[removed: deleted by author]” placeholder is left in its " +
+        "place. Copies that other people or other servers already made " +
+        "cannot be recalled. There is no undo.",
+    )) {
+    return;
+  }
+  try {
+    const kp = await tkey.getOrCreateKeypair(threadIdB64);
+    const ts = Math.floor(Date.now() / 1000);
+    const sig = await tkey.signPostDelete(b64decode(p.post_id), ts, kp.privateKey);
+    await api.deletePost(p.post_id, {
+      pubkey: b64encode(kp.publicKey),
+      ts,
+      sig: b64encode(sig),
+    });
+    await refresh();
+  } catch (e) {
+    alert(`Delete failed: ${(e as Error).message}`);
+  }
 }
 
 /// Inline report form. Opens beneath the post, asks for an optional

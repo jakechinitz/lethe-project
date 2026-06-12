@@ -275,6 +275,7 @@ pub async fn invite_info(
             .allowlist_thread_pubkeys
             .as_ref()
             .map(|v| v.iter().map(|b| ids::b64(b)).collect()),
+        message_retention_days: meta.message_retention_days,
     })
 }
 
@@ -338,12 +339,13 @@ pub async fn wrap(
 
 pub async fn members(db: &PgPool, room_id_b64: &str) -> AppResult<MembersResp> {
     let room_id = ids::unb64(room_id_b64).map_err(|_| AppError::BadRequest("room_id b64"))?;
-    if db::rooms::meta_by_id(db, &room_id).await?.is_none() {
-        return Err(AppError::NotFound);
-    }
+    let meta = db::rooms::meta_by_id(db, &room_id)
+        .await?
+        .ok_or(AppError::NotFound)?;
     Ok(MembersResp {
         members: db::rooms::list_members(db, &room_id).await?,
         current_epoch: db::rooms::current_epoch(db, &room_id).await?,
+        message_retention_days: meta.message_retention_days,
     })
 }
 

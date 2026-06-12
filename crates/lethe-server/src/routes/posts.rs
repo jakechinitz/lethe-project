@@ -1,11 +1,13 @@
-//! `POST /api/threads/:thread_id/posts` and `GET .../posts?since_seq=...`
+//! `POST /api/threads/:thread_id/posts`, `GET .../posts?since_seq=...`,
+//! and `POST /api/posts/:post_id/delete` (author self-delete).
 
 use crate::{error::{AppError, AppResult}, logic, state::AppState};
 use axum::{
     extract::{Path, Query, State},
+    http::StatusCode,
     Json,
 };
-use lethe_types::posts::{CreatePostReq, CreatePostResp, PostView};
+use lethe_types::posts::{CreatePostReq, CreatePostResp, DeletePostReq, PostView};
 use serde::Deserialize;
 
 pub async fn create(
@@ -52,4 +54,13 @@ pub async fn list(
     let posts =
         logic::posts::list_posts(&state.db, identity.pubkey(), &thread_id, q.since_seq).await?;
     Ok(Json(ListResp { posts }))
+}
+
+pub async fn delete(
+    State(state): State<AppState>,
+    Path(post_id): Path<String>,
+    Json(req): Json<DeletePostReq>,
+) -> AppResult<StatusCode> {
+    logic::posts::delete_post(&state.db, &post_id, req).await?;
+    Ok(StatusCode::NO_CONTENT)
 }

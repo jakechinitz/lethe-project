@@ -156,6 +156,12 @@ async function onSubmit(ev: SubmitEvent): Promise<void> {
     thread_id: threadIdB64,
   };
 
+  // Author-chosen expiry. Empty string = "Keep forever" = omit field.
+  const expiresRaw = String(data.get("expires_in_days") ?? "");
+  if (expiresRaw) {
+    reqBody.expires_in_days = parseInt(expiresRaw, 10);
+  }
+
   let pendingKey: { publicKey: Uint8Array; privateKey: Uint8Array } | null = null;
   if (claimOp) {
     const kp = s.crypto_sign_keypair();

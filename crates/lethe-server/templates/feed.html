@@ -91,6 +91,21 @@
         Body
         <textarea name="body" rows="5" maxlength="16384" required></textarea>
       </label>
+      <label>
+        Thread lifetime
+        <select name="expires_in_days">
+          <option value="" selected>Keep forever (default)</option>
+          <option value="7">Delete after 7 days</option>
+          <option value="30">Delete after 30 days</option>
+          <option value="90">Delete after 90 days</option>
+          <option value="365">Delete after 1 year</option>
+        </select>
+      </label>
+      <p class="hint">
+        Expiry deletes the whole thread — title and every reply — from
+        this server on the chosen day. Other servers it federated to may
+        keep their copies.
+      </p>
       <div class="identity-toggle">
         <label>
           <input type="checkbox" id="claim-op-identity">

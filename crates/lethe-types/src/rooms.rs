@@ -78,6 +78,11 @@ pub struct InviteInfo {
     /// joiner can confirm they have a matching key locally.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub allowlist_thread_pubkeys: Option<Vec<B64>>,
+    /// How many days the server keeps message ciphertext before the
+    /// retention worker deletes it. Shown to joiners up front so the
+    /// ephemerality of room history is never a surprise.
+    #[serde(default)]
+    pub message_retention_days: i16,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -107,6 +112,11 @@ pub struct WrapKeyReq {
 pub struct MembersResp {
     pub members: Vec<MemberView>,
     pub current_epoch: i32,
+    /// Server-side ciphertext lifetime in days; the room page surfaces
+    /// it next to the message list ("messages are deleted from the
+    /// server after N days").
+    #[serde(default)]
+    pub message_retention_days: i16,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

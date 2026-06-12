@@ -72,6 +72,25 @@ export async function signPost(
   return s.crypto_sign_detached(payload, privateKey);
 }
 
+/// Signs the canonical self-delete payload
+/// `b"lethe-delete-v1\x00" || post_id || ts_le8`. Only the key that
+/// signed the post can produce a signature the server accepts.
+export async function signPostDelete(
+  postId: Uint8Array,
+  unixTs: number,
+  privateKey: Uint8Array,
+): Promise<Uint8Array> {
+  const s = await sodium();
+  const tsBytes = new Uint8Array(8);
+  let ts = BigInt(unixTs);
+  for (let i = 0; i < 8; i++) {
+    tsBytes[i] = Number(ts & 0xffn);
+    ts >>= 8n;
+  }
+  const payload = concat(utf8("lethe-delete-v1\x00"), postId, tsBytes);
+  return s.crypto_sign_detached(payload, privateKey);
+}
+
 /// Signs the canonical room provenance payload
 /// `b"lethe-room-v1\x00" || origin_thread || creator_thread_pubkey`.
 export async function signRoomProvenance(
