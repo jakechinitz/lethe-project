@@ -146,9 +146,10 @@ pub fn router(state: AppState) -> Router {
     app
 }
 
-pub async fn build_state(cfg: Config) -> Result<AppState, sqlx::Error> {
+pub async fn build_state(cfg: Config) -> Result<AppState, Box<dyn std::error::Error>> {
     let db: PgPool = db::connect(&cfg.database_url).await?;
-    let identity = Arc::new(federation::Identity::load_or_create(&db).await?);
+    let identity =
+        Arc::new(federation::Identity::load_or_create(&db, &cfg.server_key_path).await?);
     Ok(AppState {
         db,
         cfg,

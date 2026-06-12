@@ -11,6 +11,7 @@ use lethe_server::{
 };
 use sqlx::PgPool;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
@@ -25,6 +26,7 @@ pub struct TestServer {
     pub pow_bits: u32,
     pub server_pubkey: [u8; 32],
     pub admin_token: String,
+    pub server_key_path: PathBuf,
     _handle: JoinHandle<()>,
 }
 
@@ -41,10 +43,16 @@ pub async fn spawn() -> TestServer {
     create_db(&db_name).await;
 
     let database_url = format!("postgres://postgres:dev@127.0.0.1:5432/{db_name}");
+    // Each test gets a unique key-file path under the OS tempdir so
+    // concurrent tests do not collide on the same seed. The dir is
+    // cleaned up by the OS on reboot at the latest; we don't bother
+    // unlinking, since the path is unique per test run.
+    let server_key_path = std::env::temp_dir().join(format!("{db_name}-server-key"));
     let cfg = Config {
         database_url,
         bind_addr: "127.0.0.1:0".parse().unwrap(),
         default_pow_bits: pow_bits as u8,
+        server_key_path: server_key_path.clone(),
         federation_enabled: false,
         pull_interval: std::time::Duration::from_secs(60),
         pull_horizon_days: 0,
@@ -59,7 +67,9 @@ pub async fn spawn() -> TestServer {
     let pool = db::connect_with_pool_size(&cfg.database_url, 1)
         .await
         .expect("db connect");
-    let identity = Identity::load_or_create(&pool).await.expect("identity");
+    let identity = Identity::load_or_create(&pool, &cfg.server_key_path)
+        .await
+        .expect("identity");
     let server_pubkey = *identity.pubkey();
     let admin_token = cfg.admin_token.clone().unwrap();
     let state = AppState {
@@ -82,6 +92,7 @@ pub async fn spawn() -> TestServer {
         pow_bits,
         server_pubkey,
         admin_token,
+        server_key_path,
         _handle: handle,
     }
 }
@@ -92,7 +103,9 @@ pub async fn spawn() -> TestServer {
 /// assert on accept/reject counts.
 pub async fn pull_once(server: &TestServer) -> lethe_server::federation::pull::PullStats {
     use lethe_server::{federation::Identity, moderation::classifier::NoopClassifier};
-    let identity = Identity::load_or_create(&server.db).await.expect("identity");
+    let identity = Identity::load_or_create(&server.db, &server.server_key_path)
+        .await
+        .expect("identity");
     let classifier = NoopClassifier;
     lethe_server::federation::pull::run_once(&server.db, &identity, &classifier)
         .await

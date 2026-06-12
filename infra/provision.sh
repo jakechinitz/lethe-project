@@ -24,6 +24,8 @@ LETHE_BIN="$LETHE_HOME/lethe-server"
 LETHE_STATIC="$LETHE_HOME/static"
 LETHE_TEMPLATES="$LETHE_HOME/templates"
 LETHE_MIGRATIONS="$LETHE_HOME/migrations"
+LETHE_STATE_DIR=/var/lib/lethe
+LETHE_KEY_FILE="$LETHE_STATE_DIR/server-key"
 ENV_FILE=/etc/lethe.env
 UNIT_FILE=/etc/systemd/system/lethe.service
 TOR_CONFIG=/etc/tor/torrc.d/lethe.conf
@@ -115,7 +117,13 @@ BIND_ADDR=127.0.0.1:8080
 DEFAULT_BOARD_POW_BITS=18
 RUST_LOG=lethe_server=info,tower_http=warn
 LETHE_STATIC_DIR=$LETHE_STATIC
+LETHE_SERVER_KEY_PATH=$LETHE_KEY_FILE
 ENV
+
+# Create the state directory that holds the federation identity seed.
+# Mode 0700 on the directory + 0600 on the file (set by the server on
+# first write) keeps the seed unreadable by anyone but the lethe user.
+install -d -m 0700 -o "$LETHE_USER" -g "$LETHE_USER" "$LETHE_STATE_DIR"
 
 # ---------------------------------------------------------------- systemd
 
@@ -139,7 +147,7 @@ ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
 PrivateDevices=yes
-ReadWritePaths=
+ReadWritePaths=$LETHE_STATE_DIR
 LockPersonality=yes
 RestrictRealtime=yes
 RestrictSUIDSGID=yes

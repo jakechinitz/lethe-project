@@ -4,5 +4,8 @@
 client/dist
 crates/lethe-server/static/js/*.js
 crates/lethe-server/static/js/*.js.map
+# Federation identity seed produced by `cargo run`. NEVER commit this
+# file — anyone with it can sign federated events as your dev server.
+/server-key
 *.swp
 .DS_Store
