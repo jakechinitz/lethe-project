@@ -113,7 +113,7 @@ cat > "$ENV_FILE" <<ENV
 DATABASE_URL=$DATABASE_URL
 BIND_ADDR=127.0.0.1:8080
 DEFAULT_BOARD_POW_BITS=18
-RUST_LOG=lethe_server=info,tower_http=info
+RUST_LOG=lethe_server=info,tower_http=warn
 LETHE_STATIC_DIR=$LETHE_STATIC
 ENV
 
