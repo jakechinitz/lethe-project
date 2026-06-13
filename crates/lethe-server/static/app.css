@@ -300,12 +300,19 @@ input[type="checkbox"] {
   outline-offset: 2px;
 }
 .posts .post .reply-btn,
-.posts .post .report-btn {
+.posts .post .report-btn,
+.posts .post .delete-btn {
   font-size: .75rem;
   padding: .12rem .55rem;
   min-height: 0;
   margin: 0;
   border-radius: 0;
+}
+.posts .post .delete-btn {
+  color: #8b0000;
+}
+.posts .post .delete-btn:hover {
+  color: #5a0000;
 }
 .posts .post .report-dialog {
   margin-top: .55rem;
@@ -770,7 +777,8 @@ select option {
   .tab { white-space: nowrap; padding: .5rem .8rem; }
   /* The reply button stays inline at comment-meta size on mobile too. */
   .posts .post .reply-btn,
-  .posts .post .report-btn { width: auto; align-self: auto; }
+  .posts .post .report-btn,
+  .posts .post .delete-btn { width: auto; align-self: auto; }
   .posts .comment.depth-1 { margin-left: .65rem; }
   .posts .comment.depth-2 { margin-left: 1.3rem; }
   .posts .comment { padding: .7rem .75rem; }
