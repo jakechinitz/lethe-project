@@ -77,10 +77,10 @@ function renderViewNote(): void {
       text(viewNote, "");
       break;
     case "network":
-      text(viewNote, "Threads whose first post claims a vouch from a room you belong to or trust. Verified when you open the thread.");
+      text(viewNote, "Threads where any post claims a vouch from a room you belong to or trust. Verified when you open the thread.");
       break;
     case "room":
-      text(viewNote, `Threads whose first post claims a vouch from ${vouch.networkLabel(view.roomId) ?? "that room"}. Verified when you open the thread.`);
+      text(viewNote, `Threads where any post claims a vouch from ${vouch.networkLabel(view.roomId) ?? "that room"}. Verified when you open the thread.`);
       break;
   }
 }
