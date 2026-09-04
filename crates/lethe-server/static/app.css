@@ -258,13 +258,15 @@ input[type="checkbox"] {
 
 /* Comments: indented by depth, alternating shade by depth. */
 .posts .comment {
-  padding: .6rem 0 .6rem .85rem;
+  padding: .6rem .85rem .65rem;
   border-left: 1px solid var(--hairline);
+  border-bottom: 1px solid var(--hairline);
   scroll-margin-top: 1rem;
-  margin-top: .35rem;
 }
-.posts .comment.shade-a,
-.posts .comment.shade-b { background: transparent; }
+/* Alternating bands by depth — light enough to read as texture, with
+   a hairline underneath so each comment has a floor without a frame. */
+.posts .comment.shade-a { background: #ffffff; }
+.posts .comment.shade-b { background: #f7f7f5; }
 .posts .comment.depth-1 { margin-left: 1.1rem; }
 .posts .comment.depth-2 { margin-left: 2.2rem; }
 
