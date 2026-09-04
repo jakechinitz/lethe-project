@@ -88,10 +88,10 @@ async fn new_thread(s: &support::TestServer, tag: &str) -> (String, Vec<u8>) {
     // Unique per call: the moderation rules reject a duplicate body
     // on the same board within 24 h.
     let body = format!("thread for vouch tests ({tag})");
-    let nonce = browser::solve_pow(b"general", &body, s.pow_bits);
+    let nonce = browser::solve_pow(b"government", &body, s.pow_bits);
     let t: CreateThreadResp = reqwest::Client::new()
         .post(format!("{}/api/threads", s.base_url))
-        .json(&json!({ "board_id": "general", "title": "vouch", "body": &body, "pow_nonce": browser::b64(&nonce) }))
+        .json(&json!({ "board_id": "government", "title": format!("vouch {tag}"), "body": &body, "pow_nonce": browser::b64(&nonce) }))
         .send().await.unwrap().json().await.unwrap();
     let id = browser::unb64(&t.thread_id);
     (t.thread_id, id)
@@ -229,6 +229,18 @@ async fn roster_lifecycle_and_vouch_roundtrip() {
         .send().await.unwrap().json().await.unwrap();
     let item = feed["items"].as_array().unwrap().iter().find(|i| i["title"] == "vouched").unwrap();
     assert_eq!(item["op_vouch_room_id"], room.create.room_id);
+    assert_eq!(item["vouch_room_ids"].as_array().unwrap().len(), 1);
+
+    // The first thread has an *unvouched* OP but vouched replies: the
+    // feed must surface the room in `vouch_room_ids` (a stranger's
+    // thread that an organizer answered belongs in the organizer's
+    // network) while `op_vouch_room_id` stays absent.
+    let feed: serde_json::Value = client
+        .get(format!("{}/api/feed?cat=government", s.base_url))
+        .send().await.unwrap().json().await.unwrap();
+    let one = feed["items"].as_array().unwrap().iter().find(|i| i["title"] == "vouch one").unwrap();
+    assert!(one.get("op_vouch_room_id").is_none() || one["op_vouch_room_id"].is_null());
+    assert_eq!(one["vouch_room_ids"], json!([room.create.room_id]));
 
     // Roster advances (epoch 2 with the same set is allowed — creator
     // may re-sign). A vouch citing epoch 1 is now stale → 409.

@@ -20,6 +20,8 @@ interface FeedItem {
   /// Room the OP *claims* a vouch from. Not verified here — the thread
   /// page verifies. Enough to pre-filter by trusted rooms.
   op_vouch_room_id?: string;
+  /// Distinct rooms claimed by any post in the thread (OP or reply).
+  vouch_room_ids?: string[];
 }
 
 
@@ -85,8 +87,8 @@ function renderViewNote(): void {
 
 function applyFeedFilter(): void {
   for (const item of feedEl.querySelectorAll<HTMLElement>(".feed-item")) {
-    const room = item.dataset.vouchRoom || null;
-    item.classList.toggle("vouch-hidden", !netview.passes(view, room));
+    const rooms = (item.dataset.vouchRooms || "").split(" ").filter(Boolean);
+    item.classList.toggle("vouch-hidden", !netview.passesAny(view, rooms));
   }
 }
 
@@ -166,15 +168,35 @@ function renderItem(item: FeedItem): HTMLElement {
     `${replies} ${replies === 1 ? "reply" : "replies"}`,
     ` · last activity ${formatPostTimestamp(item.last_post_at)}`,
   ];
-  if (item.op_vouch_room_id) {
-    const label = vouch.networkLabel(item.op_vouch_room_id);
-    article.dataset.vouchRoom = item.op_vouch_room_id;
+  const rooms = item.vouch_room_ids ?? (item.op_vouch_room_id ? [item.op_vouch_room_id] : []);
+  article.dataset.vouchRooms = rooms.join(" ");
+  if (rooms.length > 0) {
+    // Prefer network rooms for the label; say whether it's the OP or a
+    // reply that carries the vouch.
+    const opLabel = item.op_vouch_room_id ? vouch.networkLabel(item.op_vouch_room_id) : null;
+    const replyLabels = rooms
+      .filter((r) => r !== item.op_vouch_room_id)
+      .map((r) => vouch.networkLabel(r))
+      .filter((l): l is string => l !== null);
+    let textLabel: string;
+    let trusted = true;
+    if (opLabel) {
+      textLabel = `vouched: ${opLabel}`;
+    } else if (replyLabels.length > 0) {
+      textLabel = `replies vouched: ${[...new Set(replyLabels)].join(", ")}`;
+    } else if (item.op_vouch_room_id) {
+      textLabel = `vouched: room ${item.op_vouch_room_id.slice(0, 8)}…`;
+      trusted = false;
+    } else {
+      textLabel = `replies vouched by ${rooms.length} room${rooms.length === 1 ? "" : "s"} you don't follow`;
+      trusted = false;
+    }
     const tag = el(
       "span",
-      { class: `vouch-badge feed-vouch ${label ? "trusted" : "untrusted"}` },
-      [label ? `vouched: ${label}` : `vouched: room ${item.op_vouch_room_id.slice(0, 8)}…`],
+      { class: `vouch-badge feed-vouch ${trusted ? "trusted" : "untrusted"}` },
+      [textLabel],
     );
-    tag.title = "Claimed by the first post; verified when you open the thread";
+    tag.title = "Claimed by posts in the thread; verified when you open it";
     metaChildren.push(" · ", tag);
   }
   article.appendChild(el("div", { class: "feed-meta" }, metaChildren));

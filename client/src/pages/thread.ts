@@ -260,17 +260,50 @@ function renderSameVoucherMarks(): void {
   }
 }
 
+/// Parent of a post under the same rule `buildTree` uses: the first
+/// `>>N` that points at an earlier existing post, else OP.
+function parentSeq(p: PostView, seqs: Set<number>): number | null {
+  if (p.seq === 1) return null;
+  const m = />>(\d+)/.exec(p.body);
+  if (m) {
+    const n = parseInt(m[1], 10);
+    if (n !== p.seq && n < p.seq && seqs.has(n)) return n;
+  }
+  return 1;
+}
+
+/// In a network/room view a post is *kept* if its own verified vouch
+/// passes, and *shown dimmed* if it's an ancestor of a kept post — so a
+/// vouched reply never floats free of what it was answering. Everything
+/// else is hidden.
 function applyVouchFilter(): void {
+  const seqs = new Set(currentPosts.map((p) => p.seq));
+  const bySeq = new Map(currentPosts.map((p) => [p.seq, p]));
+  const kept = new Set<number>();
   for (const p of currentPosts) {
-    const article = document.querySelector<HTMLElement>(`#p${p.seq}`);
-    if (!article) continue;
     const v = verdicts.get(p.seq);
     // Only a *verified* vouch counts toward a view; a pending or
     // failed one is treated as unvouched.
     const vouchedRoom = v && v.ok ? v.roomId : null;
-    const passes = netview.passes(view, vouchedRoom);
-    article.classList.toggle("vouch-hidden", !passes && p.seq !== 1);
-    article.classList.toggle("vouch-dim", !passes && p.seq === 1);
+    if (netview.passes(view, vouchedRoom)) kept.add(p.seq);
+  }
+  const context = new Set<number>();
+  for (const seq of kept) {
+    let cur = bySeq.get(seq);
+    while (cur) {
+      const parent = parentSeq(cur, seqs);
+      if (parent === null || kept.has(parent) || context.has(parent)) break;
+      context.add(parent);
+      cur = bySeq.get(parent);
+    }
+  }
+  for (const p of currentPosts) {
+    const article = document.querySelector<HTMLElement>(`#p${p.seq}`);
+    if (!article) continue;
+    const isKept = kept.has(p.seq);
+    const isContext = !isKept && (context.has(p.seq) || p.seq === 1);
+    article.classList.toggle("vouch-hidden", !isKept && !isContext);
+    article.classList.toggle("vouch-dim", isContext);
   }
 }
 

@@ -330,6 +330,10 @@ How it works, end to end:
   on the device (`client/src/lib/netview.ts`). *My network* is posts
   whose authors *chose* to prove membership in a room you belong to or
   trust; it is not "everything secretly written by people you know."
+  A thread counts if *any* post in it carries such a vouch — a
+  stranger's thread that an organizer answered is in the organizer's
+  network — and inside a thread, a vouched reply keeps its parent
+  chain visible (dimmed) so it never floats free of what it answered.
   Once you have any rooms, *My network* becomes your remembered
   default; *All* — the anonymous public commons — is always one tap
   away and never removed. The server serves everyone the same posts

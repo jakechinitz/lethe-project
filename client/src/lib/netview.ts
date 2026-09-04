@@ -57,6 +57,14 @@ export function passes(view: View, vouchedRoomId: string | null): boolean {
   }
 }
 
+/// A thread passes a view if *any* of the rooms claimed by its posts
+/// passes — an organizer replying to a stranger's thread puts that
+/// thread in the organizer's network.
+export function passesAny(view: View, vouchedRoomIds: string[]): boolean {
+  if (view.kind === "all") return true;
+  return vouchedRoomIds.some((r) => passes(view, r));
+}
+
 /// Renders the segmented control into `container` and calls `onChange`
 /// whenever the user picks a view. Returns the initial view.
 export function mount(container: HTMLElement, onChange: (v: View) => void): View {

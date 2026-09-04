@@ -24,6 +24,7 @@ struct FeedRow {
     last_post_at: Date,
     post_count: i32,
     op_vouch_room_id: Option<Vec<u8>>,
+    vouch_room_ids: Vec<Vec<u8>>,
 }
 
 impl From<FeedRow> for FeedItem {
@@ -36,16 +37,22 @@ impl From<FeedRow> for FeedItem {
             last_post_at: CoarseDate(r.last_post_at),
             post_count: r.post_count,
             op_vouch_room_id: r.op_vouch_room_id.as_ref().map(|b| ids::b64(b)),
+            vouch_room_ids: r.vouch_room_ids.iter().map(|b| ids::b64(b)).collect(),
         }
     }
 }
 
 /// Column list shared by the four feed queries. The OP's claimed
-/// vouch room rides along so the client can pre-filter the feed by
-/// trusted rooms; verification happens on the thread page.
+/// vouch room and the distinct rooms claimed by any post ride along
+/// so the client can pre-filter the feed by its network; verification
+/// happens on the thread page. The per-thread room list is capped so
+/// a thread with many vouching rooms can't balloon the feed payload.
 const FEED_COLS: &str = "t.id, t.board_id, t.title, t.created_at, t.last_post_at, t.post_count,
              (SELECT op.vouch_room_id FROM posts op
-               WHERE op.thread_id = t.id AND op.seq = 1) AS op_vouch_room_id";
+               WHERE op.thread_id = t.id AND op.seq = 1) AS op_vouch_room_id,
+             ARRAY(SELECT DISTINCT p.vouch_room_id FROM posts p
+                    WHERE p.thread_id = t.id AND p.vouch_room_id IS NOT NULL
+                    LIMIT 20) AS vouch_room_ids";
 
 pub async fn list(
     db: &PgPool,
