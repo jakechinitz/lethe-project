@@ -171,6 +171,8 @@ textarea {
   max-width: 100%;
 }
 textarea { resize: vertical; min-height: 4.5rem; width: 100%; }
+label > input:not([type="checkbox"]),
+label > select { align-self: flex-start; }
 
 input:focus,
 textarea:focus {
@@ -561,6 +563,7 @@ code {
   font-size: .92rem;
   user-select: none;
 }
+.new-post summary { list-style: none; }
 .new-post summary::-webkit-details-marker { display: none; }
 .new-post summary::before {
   content: "+ ";
@@ -785,6 +788,7 @@ select option {
   margin: .5rem 0;
   user-select: none;
 }
+.welcome-rules > summary { list-style: none; }
 .welcome-rules > summary::-webkit-details-marker { display: none; }
 .welcome-rules > summary::before {
   content: "+ ";

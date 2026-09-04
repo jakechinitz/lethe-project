@@ -62,6 +62,11 @@ export function passes(view: View, vouchedRoomId: string | null): boolean {
 export function mount(container: HTMLElement, onChange: (v: View) => void): View {
   let current = getView();
   const rooms = vouch.networkRooms();
+  // With no rooms there's only "All" — a one-option switch is noise.
+  if (rooms.length === 0) {
+    container.hidden = true;
+    return current;
+  }
 
   const render = (): void => {
     while (container.firstChild) container.removeChild(container.firstChild);

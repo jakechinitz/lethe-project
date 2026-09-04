@@ -40,11 +40,24 @@ const status = $<HTMLParagraphElement>("#new-thread-status");
 const vouchSelect = $<HTMLSelectElement>("#vouch-room");
 const viewNote = $<HTMLParagraphElement>("#view-note");
 
-for (const id of roomkey.listRoomIds()) {
-  const keys = roomkey.read(id);
-  if (!keys || keys.roomKeys.length === 0) continue;
-  const label = vouch.trustedLabel(id) ?? `Room ${id.slice(0, 8)}`;
-  vouchSelect.appendChild(el("option", { value: id }, [label]));
+{
+  let n = 0;
+  for (const id of roomkey.listRoomIds()) {
+    const keys = roomkey.read(id);
+    if (!keys || keys.roomKeys.length === 0) continue;
+    const label = vouch.trustedLabel(id) ?? `Room ${id.slice(0, 8)}`;
+    vouchSelect.appendChild(el("option", { value: id }, [label]));
+    n++;
+  }
+  // No rooms to vouch as: hide the selector and its hint.
+  if (n === 0) {
+    const label = vouchSelect.closest("label");
+    if (label) {
+      label.hidden = true;
+      const hint = label.nextElementSibling;
+      if (hint instanceof HTMLElement && hint.classList.contains("hint")) hint.hidden = true;
+    }
+  }
 }
 
 /// All / My network / Room X. The feed only knows which room the first

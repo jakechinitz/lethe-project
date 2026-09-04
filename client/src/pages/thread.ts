@@ -62,12 +62,17 @@ vouchSelect.addEventListener("change", updateVouchHint);
 claim.addEventListener("change", updateVouchHint);
 
 function populateVouchSelect(): void {
+  let n = 0;
   for (const id of roomkey.listRoomIds()) {
     const keys = roomkey.read(id);
     if (!keys || keys.roomKeys.length === 0) continue; // pending join: not on roster yet
     const label = vouch.trustedLabel(id) ?? `Room ${id.slice(0, 8)}`;
     vouchSelect.appendChild(el("option", { value: id }, [label]));
+    n++;
   }
+  // Nothing to vouch as: don't show an empty control.
+  const toggle = document.querySelector<HTMLElement>(".vouch-toggle");
+  if (toggle && n === 0) toggle.hidden = true;
 }
 
 function updateVouchHint(): void {
