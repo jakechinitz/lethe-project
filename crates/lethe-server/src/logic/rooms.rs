@@ -337,16 +337,121 @@ pub async fn wrap(
     Ok(())
 }
 
-pub async fn members(db: &PgPool, room_id_b64: &str) -> AppResult<MembersResp> {
+/// Member-only member list. The requester proves membership with a
+/// signed, replay-protected request; pending joiners (row present,
+/// not removed, no wrap yet) qualify so they can find their own wrap.
+pub async fn members_authed(
+    db: &PgPool,
+    room_id_b64: &str,
+    req: MembersReq,
+) -> AppResult<MembersResp> {
     let room_id = ids::unb64(room_id_b64).map_err(|_| AppError::BadRequest("room_id b64"))?;
     let meta = db::rooms::meta_by_id(db, &room_id)
         .await?
         .ok_or(AppError::NotFound)?;
+    let requester_pk = decode_pubkey(&req.requester_sig_pubkey, "requester_sig_pubkey")?;
+    let sig = ids::unb64(&req.sig).map_err(|_| AppError::BadRequest("sig b64"))?;
+    if sig.len() != SIG_LEN {
+        return Err(AppError::BadRequest("sig length"));
+    }
+    let now_ts = time::OffsetDateTime::now_utc().unix_timestamp();
+    if (now_ts - req.ts).abs() > 60 {
+        return Err(AppError::BadRequest("ts outside ±60s window"));
+    }
+    crypto::verify_members_request(&requester_pk, &sig, &room_id, req.ts)?;
+    if !db::nonces::record(db, "members", &requester_pk, req.ts).await? {
+        return Err(AppError::Conflict("replay: this signature was already used"));
+    }
+    if !db::rooms::is_member(db, &room_id, &requester_pk).await? {
+        return Err(AppError::Forbidden("not a current member of this room"));
+    }
     Ok(MembersResp {
         members: db::rooms::list_members(db, &room_id).await?,
         current_epoch: db::rooms::current_epoch(db, &room_id).await?,
         message_retention_days: meta.message_retention_days,
+        vouching_enabled: meta.vouching_enabled,
+        roster_epoch: meta.roster_epoch,
     })
+}
+
+/// Public roster for vouching rooms: exactly what a vouch verifier
+/// needs (creator key, epoch, member signing keys, creator signature)
+/// and nothing else. 404 unless the creator has enabled vouching.
+pub async fn roster(db: &PgPool, room_id_b64: &str) -> AppResult<RosterResp> {
+    let room_id = ids::unb64(room_id_b64).map_err(|_| AppError::BadRequest("room_id b64"))?;
+    let meta = db::rooms::meta_by_id(db, &room_id)
+        .await?
+        .ok_or(AppError::NotFound)?;
+    if !meta.vouching_enabled || meta.roster_epoch < 1 {
+        return Err(AppError::NotFound);
+    }
+    let stored = db::rooms::roster_at(db, &room_id, meta.roster_epoch)
+        .await?
+        .ok_or(AppError::NotFound)?;
+    let creator = db::rooms::creator_sig_pubkey(db, &room_id)
+        .await?
+        .ok_or(AppError::NotFound)?;
+    Ok(RosterResp {
+        room_id: ids::b64(&room_id),
+        creator_sig_pubkey: ids::b64(&creator),
+        epoch: meta.roster_epoch,
+        member_sig_pubkeys: stored.member_sig_pubkeys.iter().map(|p| ids::b64(p)).collect(),
+        creator_sig: ids::b64(&stored.creator_sig),
+    })
+}
+
+/// Creator publishes a signed roster snapshot. Enables vouching on
+/// first publish. The submitted set must equal the live accepted-
+/// active set and the epoch must be exactly `current + 1`, so neither
+/// the server nor a stale client can advance the roster to something
+/// the room doesn't actually have.
+pub async fn post_roster(
+    db: &PgPool,
+    room_id_b64: &str,
+    req: PostRosterReq,
+) -> AppResult<()> {
+    let room_id = ids::unb64(room_id_b64).map_err(|_| AppError::BadRequest("room_id b64"))?;
+    let meta = db::rooms::meta_by_id(db, &room_id)
+        .await?
+        .ok_or(AppError::NotFound)?;
+    if req.epoch != meta.roster_epoch + 1 {
+        return Err(AppError::Conflict("roster epoch must be current + 1"));
+    }
+    if req.member_sig_pubkeys.is_empty()
+        || req.member_sig_pubkeys.len() > lethe_types::posts::VOUCH_MAX_RING
+    {
+        return Err(AppError::BadRequest("roster size"));
+    }
+    let mut ring: Vec<Vec<u8>> = Vec::with_capacity(req.member_sig_pubkeys.len());
+    for p in &req.member_sig_pubkeys {
+        ring.push(decode_pubkey(p, "member_sig_pubkey")?);
+    }
+    for w in ring.windows(2) {
+        if w[0] >= w[1] {
+            return Err(AppError::BadRequest("roster must be strictly sorted"));
+        }
+    }
+    let creator_sig =
+        ids::unb64(&req.creator_sig).map_err(|_| AppError::BadRequest("creator_sig b64"))?;
+    if creator_sig.len() != SIG_LEN {
+        return Err(AppError::BadRequest("creator_sig length"));
+    }
+    let creator = db::rooms::creator_sig_pubkey(db, &room_id)
+        .await?
+        .ok_or(AppError::NotFound)?;
+    crypto::verify_roster_sig(&creator, &creator_sig, &room_id, req.epoch, &ring)?;
+
+    let live = db::rooms::accepted_active_sig_pubkeys(db, &room_id).await?;
+    if live != ring {
+        return Err(AppError::Conflict(
+            "roster does not match the room's accepted active members",
+        ));
+    }
+    let now = ltime::today_utc();
+    if !db::rooms::insert_roster(db, &room_id, req.epoch, &ring, &creator_sig, now).await? {
+        return Err(AppError::Conflict("roster epoch advanced concurrently"));
+    }
+    Ok(())
 }
 
 /// Removes a member and rekeys the room atomically. Only the room's

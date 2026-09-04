@@ -52,8 +52,25 @@ pub async fn wrap(
 pub async fn members(
     State(state): State<AppState>,
     Path(room_id): Path<String>,
+    Json(req): Json<MembersReq>,
 ) -> AppResult<Json<MembersResp>> {
-    Ok(Json(logic::rooms::members(&state.db, &room_id).await?))
+    Ok(Json(logic::rooms::members_authed(&state.db, &room_id, req).await?))
+}
+
+pub async fn roster(
+    State(state): State<AppState>,
+    Path(room_id): Path<String>,
+) -> AppResult<Json<RosterResp>> {
+    Ok(Json(logic::rooms::roster(&state.db, &room_id).await?))
+}
+
+pub async fn post_roster(
+    State(state): State<AppState>,
+    Path(room_id): Path<String>,
+    Json(req): Json<PostRosterReq>,
+) -> AppResult<StatusCode> {
+    logic::rooms::post_roster(&state.db, &room_id, req).await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 pub async fn provenance(

@@ -67,6 +67,8 @@ pub struct RoomMeta {
     /// Server-side ciphertext lifetime; surfaced to clients so the UI
     /// can tell members how long messages stay fetchable.
     pub message_retention_days: i16,
+    pub vouching_enabled: bool,
+    pub roster_epoch: i32,
 }
 
 type RoomMetaTuple = (
@@ -77,6 +79,8 @@ type RoomMetaTuple = (
     Date,
     Option<Vec<Vec<u8>>>,
     i16,
+    bool,
+    i32,
 );
 
 fn meta_from_tuple(t: RoomMetaTuple) -> RoomMeta {
@@ -88,6 +92,8 @@ fn meta_from_tuple(t: RoomMetaTuple) -> RoomMeta {
         created_at,
         allowlist,
         message_retention_days,
+        vouching_enabled,
+        roster_epoch,
     ) = t;
     RoomMeta {
         id,
@@ -97,31 +103,117 @@ fn meta_from_tuple(t: RoomMetaTuple) -> RoomMeta {
         created_at,
         allowlist_thread_pubkeys: allowlist,
         message_retention_days,
+        vouching_enabled,
+        roster_epoch,
     }
 }
 
+const META_COLS: &str = "id, origin_thread, creator_thread_pubkey, provenance_sig, created_at,
+                allowlist_thread_pubkeys, message_retention_days, vouching_enabled, roster_epoch";
+
 pub async fn meta_by_id(db: &PgPool, id: &[u8]) -> Result<Option<RoomMeta>, sqlx::Error> {
-    let row: Option<RoomMetaTuple> = sqlx::query_as(
-        "SELECT id, origin_thread, creator_thread_pubkey, provenance_sig, created_at,
-                allowlist_thread_pubkeys, message_retention_days
-         FROM rooms WHERE id = $1",
-    )
-    .bind(id)
-    .fetch_optional(db)
-    .await?;
+    let row: Option<RoomMetaTuple> =
+        sqlx::query_as(&format!("SELECT {META_COLS} FROM rooms WHERE id = $1"))
+            .bind(id)
+            .fetch_optional(db)
+            .await?;
     Ok(row.map(meta_from_tuple))
 }
 
 pub async fn meta_by_invite(db: &PgPool, code: &str) -> Result<Option<RoomMeta>, sqlx::Error> {
-    let row: Option<RoomMetaTuple> = sqlx::query_as(
-        "SELECT id, origin_thread, creator_thread_pubkey, provenance_sig, created_at,
-                allowlist_thread_pubkeys, message_retention_days
-         FROM rooms WHERE invite_code = $1",
+    let row: Option<RoomMetaTuple> =
+        sqlx::query_as(&format!("SELECT {META_COLS} FROM rooms WHERE invite_code = $1"))
+            .bind(code)
+            .fetch_optional(db)
+            .await?;
+    Ok(row.map(meta_from_tuple))
+}
+
+/// Signing pubkeys of *accepted* (wrapped) and *active* (not removed)
+/// members, sorted ascending by raw bytes — the canonical vouch ring.
+/// Pending joiners are excluded until someone grants them a key.
+pub async fn accepted_active_sig_pubkeys(
+    db: &PgPool,
+    room_id: &[u8],
+) -> Result<Vec<Vec<u8>>, sqlx::Error> {
+    let rows: Vec<(Vec<u8>,)> = sqlx::query_as(
+        "SELECT member_sig_pubkey FROM room_members
+         WHERE room_id = $1 AND removed_at IS NULL AND wrapped_key IS NOT NULL
+         ORDER BY member_sig_pubkey ASC",
     )
-    .bind(code)
+    .bind(room_id)
+    .fetch_all(db)
+    .await?;
+    Ok(rows.into_iter().map(|r| r.0).collect())
+}
+
+/// The creator's signing pubkey: the one member with no inviter.
+pub async fn creator_sig_pubkey(db: &PgPool, room_id: &[u8]) -> Result<Option<Vec<u8>>, sqlx::Error> {
+    let row: Option<(Vec<u8>,)> = sqlx::query_as(
+        "SELECT member_sig_pubkey FROM room_members
+         WHERE room_id = $1 AND invited_by_box_pubkey IS NULL
+         ORDER BY joined_at ASC LIMIT 1",
+    )
+    .bind(room_id)
     .fetch_optional(db)
     .await?;
-    Ok(row.map(meta_from_tuple))
+    Ok(row.map(|r| r.0))
+}
+
+pub struct StoredRoster {
+    pub member_sig_pubkeys: Vec<Vec<u8>>,
+    pub creator_sig: Vec<u8>,
+}
+
+pub async fn roster_at(db: &PgPool, room_id: &[u8], epoch: i32) -> Result<Option<StoredRoster>, sqlx::Error> {
+    let row: Option<(Vec<Vec<u8>>, Vec<u8>)> = sqlx::query_as(
+        "SELECT member_sig_pubkeys, creator_sig FROM room_rosters
+         WHERE room_id = $1 AND epoch = $2",
+    )
+    .bind(room_id)
+    .bind(epoch)
+    .fetch_optional(db)
+    .await?;
+    Ok(row.map(|(member_sig_pubkeys, creator_sig)| StoredRoster { member_sig_pubkeys, creator_sig }))
+}
+
+/// Publishes roster `epoch`, which must be exactly `current + 1`
+/// (optimistic check inside the transaction so two racing publishes
+/// can't both land). Returns `false` on epoch conflict.
+pub async fn insert_roster(
+    db: &PgPool,
+    room_id: &[u8],
+    epoch: i32,
+    member_sig_pubkeys: &[Vec<u8>],
+    creator_sig: &[u8],
+    signed_at: Date,
+) -> Result<bool, sqlx::Error> {
+    let mut tx = db.begin().await?;
+    let bumped = sqlx::query(
+        "UPDATE rooms SET roster_epoch = $2, vouching_enabled = TRUE
+         WHERE id = $1 AND roster_epoch = $2 - 1",
+    )
+    .bind(room_id)
+    .bind(epoch)
+    .execute(&mut *tx)
+    .await?;
+    if bumped.rows_affected() != 1 {
+        tx.rollback().await?;
+        return Ok(false);
+    }
+    sqlx::query(
+        "INSERT INTO room_rosters (room_id, epoch, member_sig_pubkeys, creator_sig, signed_at)
+         VALUES ($1, $2, $3, $4, $5)",
+    )
+    .bind(room_id)
+    .bind(epoch)
+    .bind(member_sig_pubkeys)
+    .bind(creator_sig)
+    .bind(signed_at)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(true)
 }
 
 pub async fn add_member(

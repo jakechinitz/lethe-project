@@ -26,6 +26,11 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 
 ed25519-dalek = "2"
+# Ring-signature verification for room vouches (crypto.rs only). The
+# `digest` feature provides `nonspec_map_to_curve`, which is
+# byte-compatible with libsodium's `crypto_core_ed25519_from_uniform`
+# over the first 32 bytes of a SHA-512 digest — the browser side.
+curve25519-dalek = { version = "4", features = ["digest", "precomputed-tables"] }
 sha2 = "0.10"
 rand = "0.8"
 

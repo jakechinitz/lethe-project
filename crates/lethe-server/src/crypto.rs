@@ -138,6 +138,131 @@ pub fn verify_wrap_request(
     verify_ed25519(inviter_sig_pubkey, sig, &payload)
 }
 
+/// Verifies a creator-signed room roster.
+pub fn verify_roster_sig(
+    creator_sig_pubkey: &[u8],
+    sig: &[u8],
+    room_id: &[u8],
+    epoch: i32,
+    member_sig_pubkeys: &[Vec<u8>],
+) -> Result<(), CryptoError> {
+    let payload = rooms::canonical_roster(room_id, epoch, member_sig_pubkeys);
+    verify_ed25519(creator_sig_pubkey, sig, &payload)
+}
+
+/// Verifies the signature on an authenticated members-list request.
+pub fn verify_members_request(
+    requester_sig_pubkey: &[u8],
+    sig: &[u8],
+    room_id: &[u8],
+    ts: i64,
+) -> Result<(), CryptoError> {
+    let payload = rooms::canonical_members_request(room_id, ts);
+    verify_ed25519(requester_sig_pubkey, sig, &payload)
+}
+
+/// Decoded, length-checked vouch ready for ring verification.
+pub struct VouchParts<'a> {
+    pub room_id: &'a [u8],
+    pub thread_id: &'a [u8],
+    pub body: &'a str,
+    pub roster_epoch: i32,
+    /// Sorted ascending, 1..=50 entries of 32 bytes.
+    pub ring: &'a [Vec<u8>],
+    pub key_image: &'a [u8; 32],
+    pub c0: &'a [u8; 32],
+    pub s: &'a [[u8; 32]],
+}
+
+/// Verifies a room vouch's linkable ring signature (LSAG over Ed25519).
+/// Mirrors `client/src/lib/ringsig.ts` byte-for-byte; the layout is
+/// documented on `lethe_types::posts::VouchPayload`.
+///
+/// Rejects non-canonical scalars and any ring key or key image that is
+/// not a torsion-free, non-identity point — the same set libsodium's
+/// `crypto_core_ed25519_is_valid_point` accepts on the browser side.
+// `nonspec_map_to_curve` is deprecated upstream because it is not an
+// RFC 9380 hash-to-curve. We want exactly its non-spec behaviour:
+// Elligator2 over SHA-512, byte-identical to libsodium's
+// `crypto_core_ed25519_from_uniform`, which is what the browser runs.
+#[allow(deprecated)]
+pub fn verify_vouch(v: &VouchParts<'_>) -> Result<(), CryptoError> {
+    use curve25519_dalek::edwards::{CompressedEdwardsY, EdwardsPoint};
+    use curve25519_dalek::scalar::Scalar;
+    use curve25519_dalek::traits::IsIdentity;
+    use lethe_types::posts::{
+        vouch_challenge_input, vouch_key_image_input, vouch_message_input, VOUCH_MAX_RING,
+    };
+    use sha2::{Digest, Sha256, Sha512};
+
+    let n = v.ring.len();
+    if n == 0 || n > VOUCH_MAX_RING || v.s.len() != n {
+        return Err(CryptoError::BadSignature);
+    }
+
+    fn valid_point(bytes: &[u8]) -> Result<EdwardsPoint, CryptoError> {
+        let arr: [u8; 32] = bytes.try_into().map_err(|_| CryptoError::BadPubkey)?;
+        let p = CompressedEdwardsY(arr)
+            .decompress()
+            .ok_or(CryptoError::BadPubkey)?;
+        if p.is_small_order() || !p.is_torsion_free() || p.is_identity() {
+            return Err(CryptoError::BadPubkey);
+        }
+        Ok(p)
+    }
+    fn canonical_scalar(bytes: &[u8; 32]) -> Result<Scalar, CryptoError> {
+        Option::<Scalar>::from(Scalar::from_canonical_bytes(*bytes))
+            .ok_or(CryptoError::BadSignature)
+    }
+
+    let key_image = valid_point(v.key_image)?;
+    let mut points = Vec::with_capacity(n);
+    let mut bases = Vec::with_capacity(n);
+    for (i, pk) in v.ring.iter().enumerate() {
+        if i > 0 && v.ring[i - 1] >= *pk {
+            return Err(CryptoError::BadSignature); // not strictly sorted
+        }
+        points.push(valid_point(pk)?);
+        let base = EdwardsPoint::nonspec_map_to_curve::<Sha512>(&vouch_key_image_input(
+            v.room_id,
+            v.thread_id,
+            pk,
+        ));
+        bases.push(base);
+    }
+
+    let body_hash: [u8; 32] = Sha256::digest(v.body.as_bytes()).into();
+    let m: [u8; 64] = Sha512::digest(vouch_message_input(
+        v.room_id,
+        v.thread_id,
+        &body_hash,
+        v.roster_epoch,
+        v.ring,
+        v.key_image,
+    ))
+    .into();
+
+    let c0 = canonical_scalar(v.c0)?;
+    let mut c = c0;
+    for i in 0..n {
+        let s_i = canonical_scalar(&v.s[i])?;
+        let l = EdwardsPoint::vartime_double_scalar_mul_basepoint(&c, &points[i], &s_i);
+        let r = s_i * bases[i] + c * key_image;
+        let wide: [u8; 64] = Sha512::digest(vouch_challenge_input(
+            &m,
+            &l.compress().to_bytes(),
+            &r.compress().to_bytes(),
+        ))
+        .into();
+        c = Scalar::from_bytes_mod_order_wide(&wide);
+    }
+    if c == c0 {
+        Ok(())
+    } else {
+        Err(CryptoError::VerifyFailed)
+    }
+}
+
 fn verify_ed25519(pubkey: &[u8], sig: &[u8], msg: &[u8]) -> Result<(), CryptoError> {
     let pk_arr: [u8; 32] = pubkey.try_into().map_err(|_| CryptoError::BadPubkey)?;
     let sig_arr: [u8; 64] = sig.try_into().map_err(|_| CryptoError::BadSignature)?;

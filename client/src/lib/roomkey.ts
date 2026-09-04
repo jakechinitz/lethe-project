@@ -109,6 +109,17 @@ export function persist(roomIdB64: string, k: RoomKeys): void {
   });
 }
 
+/// Every room id this browser holds keys for. Built from localStorage
+/// only; the server never sees a per-user room list.
+export function listRoomIds(): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (key && key.startsWith(PREFIX)) out.push(key.slice(PREFIX.length));
+  }
+  return out;
+}
+
 export function read(roomIdB64: string): RoomKeys | null {
   const stored = loadRaw(roomIdB64);
   if (!stored) return null;
@@ -269,6 +280,19 @@ export async function signListRequest(
   const s = await sodium();
   const tsBytes = tsLeBytes(unixTs);
   const payload = concat(utf8("lethe-list-v1\x00"), roomId, tsBytes);
+  return s.crypto_sign_detached(payload, sigPriv);
+}
+
+/// Signs an authenticated members-list request:
+///   `b"lethe-members-v1\x00" || room_id || ts_le8`.
+/// The member list is member-only; pending joiners may call it too.
+export async function signMembersRequest(
+  roomId: Uint8Array,
+  unixTs: number,
+  sigPriv: Uint8Array,
+): Promise<Uint8Array> {
+  const s = await sodium();
+  const payload = concat(utf8("lethe-members-v1\x00"), roomId, tsLeBytes(unixTs));
   return s.crypto_sign_detached(payload, sigPriv);
 }
 

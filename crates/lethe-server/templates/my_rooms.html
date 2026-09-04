@@ -28,6 +28,28 @@
 <section id="my-rooms-list" aria-busy="true">
   <p class="muted">Loading…</p>
 </section>
+
+<section class="trusted-rooms">
+  <h2>Rooms I trust</h2>
+  <p class="muted">
+    Public posts vouched by these rooms get a badge, and you can filter
+    threads and the front page to them. This list lives only in this
+    browser; the server never sees it.
+  </p>
+  <div id="trusted-list"></div>
+  <form id="trust-form" class="trust-form">
+    <label>
+      Room id
+      <input name="room_id" placeholder="paste a room id" required>
+    </label>
+    <label>
+      Label
+      <input name="label" placeholder="e.g. Downtown organizers" maxlength="60" required>
+    </label>
+    <button type="submit">Trust this room</button>
+    <p class="status" id="trust-status"></p>
+  </form>
+</section>
 <script type="module" src="/static/js/my_rooms.js"></script>
 {% endblock %}
 

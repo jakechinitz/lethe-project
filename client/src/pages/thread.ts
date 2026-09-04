@@ -8,6 +8,9 @@ import { $, clear, el, formatPostTimestamp, meta, text } from "../lib/dom";
 import { b64decode, b64encode } from "../lib/b64";
 import { findNonce } from "../lib/pow";
 import * as tkey from "../lib/threadkey";
+import * as roomkey from "../lib/roomkey";
+import * as vouch from "../lib/vouch";
+import * as netview from "../lib/netview";
 import { limitations } from "../lib/strings";
 
 const threadIdB64 = meta("lethe-thread-id");
@@ -19,8 +22,75 @@ const replyForm = $<HTMLFormElement>("#reply-form");
 const replyStatus = $<HTMLParagraphElement>("#reply-status");
 const claim = $<HTMLInputElement>("#claim-identity");
 const forgetBtn = $<HTMLButtonElement>("#forget-identity");
+const vouchSelect = $<HTMLSelectElement>("#vouch-room");
+const vouchHint = $<HTMLParagraphElement>("#vouch-hint");
+const vouchSummary = $<HTMLParagraphElement>("#vouch-summary");
+const viewNote = $<HTMLParagraphElement>("#view-note");
 
 const MAX_DEPTH = 2;
+
+/// Verified vouch verdicts by post seq, filled asynchronously after
+/// each render. Drives badges, the view filter, and the
+/// distinct-voucher summary.
+const verdicts = new Map<number, vouch.VouchVerdict>();
+let currentPosts: PostView[] = [];
+
+/// All / My network / Room X — computed on the device, remembered.
+let view: netview.View = netview.mount($<HTMLElement>("#view-switch"), (v) => {
+  view = v;
+  applyVouchFilter();
+  renderViewNote();
+});
+renderViewNote();
+
+function renderViewNote(): void {
+  switch (view.kind) {
+    case "all":
+      text(viewNote, "");
+      break;
+    case "network":
+      text(viewNote, "Showing posts whose authors proved membership in a room you belong to or trust. Verified on this device.");
+      break;
+    case "room":
+      text(viewNote, `Showing posts vouched by ${vouch.networkLabel(view.roomId) ?? "that room"}. Verified on this device.`);
+      break;
+  }
+}
+
+populateVouchSelect();
+vouchSelect.addEventListener("change", updateVouchHint);
+claim.addEventListener("change", updateVouchHint);
+
+function populateVouchSelect(): void {
+  let n = 0;
+  for (const id of roomkey.listRoomIds()) {
+    const keys = roomkey.read(id);
+    if (!keys || keys.roomKeys.length === 0) continue; // pending join: not on roster yet
+    const label = vouch.trustedLabel(id) ?? `Room ${id.slice(0, 8)}`;
+    vouchSelect.appendChild(el("option", { value: id }, [label]));
+    n++;
+  }
+  // Nothing to vouch as: don't show an empty control.
+  const toggle = document.querySelector<HTMLElement>(".vouch-toggle");
+  if (toggle && n === 0) toggle.hidden = true;
+}
+
+function updateVouchHint(): void {
+  if (vouchSelect.value && claim.checked) {
+    text(
+      vouchHint,
+      "Heads-up: vouching while claiming a thread identity tells readers that " +
+        "this thread persona is a member of that room (still not which member). " +
+        "Uncheck \"Claim thread-local identity\" to vouch anonymously.",
+    );
+  } else {
+    text(
+      vouchHint,
+      "A vouch proves \"someone in that room wrote this\" without revealing who. " +
+        "Vouching without a thread identity is the most private option.",
+    );
+  }
+}
 
 claim.checked = tkey.hasKeypair(threadIdB64);
 updateForgetVisibility();
@@ -49,6 +119,22 @@ replyForm.addEventListener("submit", async (ev) => {
     signature = b64encode(sig);
   }
 
+  let vouchPayload: vouch.VouchPayloadLike | undefined;
+  if (vouchSelect.value) {
+    const keys = roomkey.read(vouchSelect.value);
+    if (!keys) {
+      text(replyStatus, "No keys for the selected room on this device.");
+      return;
+    }
+    text(replyStatus, "Building room vouch…");
+    try {
+      vouchPayload = await vouch.buildVouch(vouchSelect.value, threadIdBytes, body, keys);
+    } catch (e) {
+      text(replyStatus, `Vouch failed: ${(e as Error).message}`);
+      return;
+    }
+  }
+
   text(replyStatus, "Submitting…");
   try {
     await api.createPost(threadIdB64, {
@@ -56,6 +142,7 @@ replyForm.addEventListener("submit", async (ev) => {
       pow_nonce: b64encode(nonce),
       pubkey,
       signature,
+      vouch: vouchPayload,
     });
     replyForm.reset();
     text(replyStatus, "");
@@ -89,6 +176,8 @@ async function refresh(): Promise<void> {
 function render(posts: PostView[]): void {
   clear(postsEl);
   postsEl.removeAttribute("aria-busy");
+  currentPosts = posts;
+  verdicts.clear();
   if (posts.length === 0) {
     postsEl.appendChild(el("p", { class: "muted" }, ["No posts yet."]));
     return;
@@ -108,6 +197,138 @@ function render(posts: PostView[]): void {
     renderSubtree(posts, childrenOf, labels, seq, 0);
   }
   scrollToHashTarget();
+  applyVouchFilter();
+  void verifyAllVouches(posts);
+}
+
+/// Verifies every vouch locally (never trusting the server's word),
+/// then updates badges, the filter, and the summary line.
+async function verifyAllVouches(posts: PostView[]): Promise<void> {
+  const withVouch = posts.filter((p) => p.vouch);
+  await Promise.all(
+    withVouch.map(async (p) => {
+      const verdict = await vouch.verifyVouch(p.vouch!, threadIdBytes, p.body);
+      if (currentPosts !== posts) return; // a newer render superseded us
+      verdicts.set(p.seq, verdict);
+      renderVouchBadge(p.seq, verdict);
+    }),
+  );
+  if (currentPosts !== posts) return;
+  renderSameVoucherMarks();
+  applyVouchFilter();
+  renderVouchSummary();
+}
+
+function renderVouchBadge(seq: number, verdict: vouch.VouchVerdict): void {
+  const badge = document.querySelector<HTMLElement>(`#p${seq} .vouch-badge`);
+  if (!badge) return;
+  badge.classList.remove("pending", "trusted", "untrusted", "invalid");
+  if (!verdict.ok) {
+    badge.classList.add("invalid");
+    badge.textContent = "Vouch failed verification";
+    badge.title = verdict.reason;
+  } else if (verdict.trustedLabel) {
+    badge.classList.add("trusted");
+    badge.textContent = `Vouched by ${verdict.trustedLabel}`;
+    badge.title = `Room ${verdict.roomId}`;
+  } else {
+    badge.classList.add("untrusted");
+    badge.textContent = `Vouched by room ${verdict.roomId.slice(0, 8)}… (not in your trusted list)`;
+    badge.title = `Room ${verdict.roomId} — add it under My rooms to trust it`;
+  }
+}
+
+/// Thread-scoped linkability: posts whose vouches share a key image
+/// came from the same (still anonymous) member. Mark the later ones.
+function renderSameVoucherMarks(): void {
+  const firstSeqByImage = new Map<string, number>();
+  const sorted = [...currentPosts].sort((a, b) => a.seq - b.seq);
+  for (const p of sorted) {
+    const v = verdicts.get(p.seq);
+    if (!p.vouch || !v?.ok) continue;
+    const key = `${v.roomId}:${p.vouch.key_image}`;
+    const first = firstSeqByImage.get(key);
+    const badge = document.querySelector<HTMLElement>(`#p${p.seq} .vouch-badge`);
+    if (first === undefined) {
+      firstSeqByImage.set(key, p.seq);
+    } else if (badge && !badge.nextElementSibling?.classList.contains("vouch-same")) {
+      badge.insertAdjacentElement(
+        "afterend",
+        el("span", { class: "vouch-same" }, [` · same voucher as #${first}`]),
+      );
+    }
+  }
+}
+
+/// Parent of a post under the same rule `buildTree` uses: the first
+/// `>>N` that points at an earlier existing post, else OP.
+function parentSeq(p: PostView, seqs: Set<number>): number | null {
+  if (p.seq === 1) return null;
+  const m = />>(\d+)/.exec(p.body);
+  if (m) {
+    const n = parseInt(m[1], 10);
+    if (n !== p.seq && n < p.seq && seqs.has(n)) return n;
+  }
+  return 1;
+}
+
+/// In a network/room view a post is *kept* if its own verified vouch
+/// passes, and *shown dimmed* if it's an ancestor of a kept post — so a
+/// vouched reply never floats free of what it was answering. Everything
+/// else is hidden.
+function applyVouchFilter(): void {
+  const seqs = new Set(currentPosts.map((p) => p.seq));
+  const bySeq = new Map(currentPosts.map((p) => [p.seq, p]));
+  const kept = new Set<number>();
+  for (const p of currentPosts) {
+    const v = verdicts.get(p.seq);
+    // Only a *verified* vouch counts toward a view; a pending or
+    // failed one is treated as unvouched.
+    const vouchedRoom = v && v.ok ? v.roomId : null;
+    if (netview.passes(view, vouchedRoom)) kept.add(p.seq);
+  }
+  const context = new Set<number>();
+  for (const seq of kept) {
+    let cur = bySeq.get(seq);
+    while (cur) {
+      const parent = parentSeq(cur, seqs);
+      if (parent === null || kept.has(parent) || context.has(parent)) break;
+      context.add(parent);
+      cur = bySeq.get(parent);
+    }
+  }
+  for (const p of currentPosts) {
+    const article = document.querySelector<HTMLElement>(`#p${p.seq}`);
+    if (!article) continue;
+    const isKept = kept.has(p.seq);
+    const isContext = !isKept && (context.has(p.seq) || p.seq === 1);
+    article.classList.toggle("vouch-hidden", !isKept && !isContext);
+    article.classList.toggle("vouch-dim", isContext);
+  }
+}
+
+/// "N distinct members of <room> vouched in this thread" — the one
+/// place a count is safe to show, because the set behind it is a
+/// curated room, not the open board.
+function renderVouchSummary(): void {
+  const perRoom = new Map<string, { label: string; images: Set<string> }>();
+  for (const p of currentPosts) {
+    const v = verdicts.get(p.seq);
+    if (!p.vouch || !v?.ok || !v.trustedLabel) continue;
+    const entry = perRoom.get(v.roomId) ?? { label: v.trustedLabel, images: new Set<string>() };
+    entry.images.add(p.vouch.key_image);
+    perRoom.set(v.roomId, entry);
+  }
+  if (perRoom.size === 0) {
+    text(vouchSummary, "");
+    return;
+  }
+  const parts: string[] = [];
+  for (const { label, images } of perRoom.values()) {
+    const n = images.size;
+    parts.push(`${n} distinct member${n === 1 ? "" : "s"} of ${label} vouched in this thread`);
+  }
+  text(vouchSummary, parts.join(" · "));
 }
 
 function renderSubtree(
@@ -250,6 +471,12 @@ function renderPost(
     ]);
     fromBadge.title = `Origin server: ${p.origin_server_id}`;
     metaChildren.push(" · ", fromBadge);
+  }
+  if (p.vouch) {
+    // Placeholder until local verification finishes; never shows
+    // "verified" on the server's say-so.
+    const badge = el("span", { class: "vouch-badge pending" }, ["Verifying vouch…"]);
+    metaChildren.push(" · ", badge);
   }
   const meta_ = el("div", { class: "meta" }, metaChildren);
   const body = el("div", { class: "body" }, renderBody(p.body));

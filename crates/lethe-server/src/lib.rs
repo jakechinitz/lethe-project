@@ -68,7 +68,11 @@ pub fn router(state: AppState) -> Router {
             post(routes::rooms::join),
         )
         .route("/rooms/:room_id/wrap", post(routes::rooms::wrap))
-        .route("/rooms/:room_id/members", get(routes::rooms::members))
+        .route("/rooms/:room_id/members", post(routes::rooms::members))
+        .route(
+            "/rooms/:room_id/roster",
+            get(routes::rooms::roster).post(routes::rooms::post_roster),
+        )
         .route("/rooms/:room_id/provenance", get(routes::rooms::provenance))
         .route("/rooms/:room_id/messages", post(routes::rooms::send_message))
         .route(

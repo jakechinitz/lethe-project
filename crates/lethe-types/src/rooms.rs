@@ -117,6 +117,77 @@ pub struct MembersResp {
     /// server after N days").
     #[serde(default)]
     pub message_retention_days: i16,
+    /// Whether the creator has published a signed roster (see
+    /// `PostRosterReq`). When true, `GET /rooms/:id/roster` is public.
+    #[serde(default)]
+    pub vouching_enabled: bool,
+    /// Latest signed roster epoch; 0 when none.
+    #[serde(default)]
+    pub roster_epoch: i32,
+}
+
+/// Body of `POST /api/rooms/:room_id/members`. The member list — box
+/// keys, join dates, the invite tree — is member-only. Pending joiners
+/// (no wrapped key yet) may still call this to find their own wrap.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MembersReq {
+    pub requester_sig_pubkey: B64,
+    /// Unix timestamp (seconds). Server rejects if more than 60 s skew.
+    pub ts: i64,
+    /// Detached Ed25519 sig over `canonical_members_request(room_id, ts)`.
+    pub sig: B64,
+}
+
+/// Canonical bytes signed for a members-list request:
+///   `b"lethe-members-v1\0" || room_id || ts_le8`.
+pub fn canonical_members_request(room_id: &[u8], ts: i64) -> Vec<u8> {
+    let mut buf = Vec::with_capacity(17 + room_id.len() + 8);
+    buf.extend_from_slice(b"lethe-members-v1\x00");
+    buf.extend_from_slice(room_id);
+    buf.extend_from_slice(&ts.to_le_bytes());
+    buf
+}
+
+/// Body of `POST /api/rooms/:room_id/roster`. The creator publishes a
+/// signed snapshot of the accepted, active member signing keys. The
+/// server checks the signature against the creator's key, that
+/// `epoch == current + 1`, and that `member_sig_pubkeys` equals the
+/// live accepted-active set — so the creator can't publish a roster
+/// the room doesn't have, and nobody but the creator can publish one.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PostRosterReq {
+    pub epoch: i32,
+    /// Sorted ascending by raw bytes; 1..=50 entries.
+    pub member_sig_pubkeys: Vec<B64>,
+    /// Creator's Ed25519 signature over `canonical_roster(...)`.
+    pub creator_sig: B64,
+}
+
+/// `GET /api/rooms/:room_id/roster` — public for vouching rooms only.
+/// Exposes exactly what a vouch verifier needs and nothing else: no
+/// box keys, no join dates, no invite tree.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RosterResp {
+    pub room_id: B64,
+    pub creator_sig_pubkey: B64,
+    pub epoch: i32,
+    pub member_sig_pubkeys: Vec<B64>,
+    pub creator_sig: B64,
+}
+
+/// Canonical bytes the creator signs for a roster:
+///   `b"lethe-roster-v1\0" || room_id || epoch_le4 || n_le2 || P_1..P_n`
+/// with `P_i` sorted ascending by raw bytes.
+pub fn canonical_roster(room_id: &[u8], epoch: i32, member_sig_pubkeys: &[Vec<u8>]) -> Vec<u8> {
+    let mut buf = Vec::with_capacity(16 + room_id.len() + 4 + 2 + member_sig_pubkeys.len() * 32);
+    buf.extend_from_slice(b"lethe-roster-v1\x00");
+    buf.extend_from_slice(room_id);
+    buf.extend_from_slice(&(epoch as u32).to_le_bytes());
+    buf.extend_from_slice(&(member_sig_pubkeys.len() as u16).to_le_bytes());
+    for p in member_sig_pubkeys {
+        buf.extend_from_slice(p);
+    }
+    buf
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -59,6 +59,9 @@
   </details>
 </section>
 
+<nav class="view-switch" id="view-switch" aria-label="View"></nav>
+<p class="view-note" id="view-note"></p>
+
 <nav class="tabs" aria-label="Categories">
   <a href="/{% if selected_sort == "newest" %}?sort=newest{% endif %}"
      class="tab{% if selected_category == "" %} active{% endif %}">All</a>
@@ -113,6 +116,16 @@
         Expiry deletes the whole thread — title and every reply — from
         this server on the chosen day. Other servers it federated to may
         keep their copies.
+      </p>
+      <label>
+        Vouch as a member of
+        <select name="vouch_room" id="vouch-room">
+          <option value="" selected>No vouch</option>
+        </select>
+      </label>
+      <p class="hint">
+        Proves "someone in that room wrote this" without revealing who.
+        Most private when combined with <em>no</em> thread identity.
       </p>
       <div class="identity-toggle">
         <label>

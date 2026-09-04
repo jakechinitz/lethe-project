@@ -213,8 +213,15 @@ async fn creator_removes_member_and_rekeys() {
 
     // Charlie can: he gets the new wrapped key, unwraps to recover the
     // new room key, and can decrypt new messages.
+    let mts = time::OffsetDateTime::now_utc().unix_timestamp();
+    let msig = browser::sign_members_request(&room_id_bytes, mts, &charlie.sig_priv);
     let members: MembersResp = client
-        .get(format!("{}/api/rooms/{}/members", s.base_url, create.room_id))
+        .post(format!("{}/api/rooms/{}/members", s.base_url, create.room_id))
+        .json(&json!({
+            "requester_sig_pubkey": browser::b64(&charlie.sig_pub),
+            "ts": mts,
+            "sig": browser::b64(&msig),
+        }))
         .send()
         .await
         .unwrap()

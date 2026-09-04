@@ -71,6 +71,17 @@ pub async fn create_thread(
         _ => return Err(AppError::BadRequest("pubkey/signature must come together")),
     };
 
+    // A vouch binds the thread id, so the client must have minted it.
+    let vouch = match &req.vouch {
+        Some(v) => {
+            if req.thread_id.is_none() {
+                return Err(AppError::BadRequest("thread_id required when vouching"));
+            }
+            Some(validate_vouch(db, v, &thread_id_vec, &req.body).await?)
+        }
+        None => None,
+    };
+
     // Author-set expiry: optional; converted to an absolute DATE at
     // creation so the retention worker needs no arithmetic per sweep.
     let now = ltime::today_utc();
@@ -109,6 +120,7 @@ pub async fn create_thread(
             signature: signature_bytes.as_deref(),
             created_at: now,
             origin_server_id: server_pubkey,
+            vouch: vouch.as_ref().map(|(json, room)| (json.as_str(), room.as_slice())),
         },
     )
     .await?;
@@ -116,6 +128,77 @@ pub async fn create_thread(
         thread_id: ids::b64(&thread_id_vec),
         seq: inserted.seq,
     })
+}
+
+/// Validates a room vouch against the room's current signed roster and
+/// verifies its ring signature. Returns the canonical JSON to store
+/// plus the room id.
+///
+/// The server's acceptance is defense in depth only — readers verify
+/// again locally, because the server is untrusted. What the server
+/// *does* enforce that readers can't: the ring must be the room's
+/// current roster, so a member removed since the last roster signing
+/// can't get a fresh vouch stored.
+async fn validate_vouch(
+    db: &PgPool,
+    v: &VouchPayload,
+    thread_id: &[u8],
+    body: &str,
+) -> AppResult<(String, Vec<u8>)> {
+    let room_id = ids::unb64(&v.room_id).map_err(|_| AppError::BadRequest("vouch room_id b64"))?;
+    if room_id.len() != 16 {
+        return Err(AppError::BadRequest("vouch room_id length"));
+    }
+    if v.ring.is_empty() || v.ring.len() > VOUCH_MAX_RING || v.s.len() != v.ring.len() {
+        return Err(AppError::BadRequest("vouch ring size"));
+    }
+    let mut ring: Vec<Vec<u8>> = Vec::with_capacity(v.ring.len());
+    for p in &v.ring {
+        let b = ids::unb64(p).map_err(|_| AppError::BadRequest("vouch ring b64"))?;
+        if b.len() != 32 {
+            return Err(AppError::BadRequest("vouch ring pubkey length"));
+        }
+        ring.push(b);
+    }
+    let key_image: [u8; 32] = ids::unb64_array(&v.key_image)
+        .map_err(|_| AppError::BadRequest("vouch key_image"))?;
+    let c0: [u8; 32] = ids::unb64_array(&v.c0).map_err(|_| AppError::BadRequest("vouch c0"))?;
+    let mut s: Vec<[u8; 32]> = Vec::with_capacity(v.s.len());
+    for x in &v.s {
+        s.push(ids::unb64_array(x).map_err(|_| AppError::BadRequest("vouch s"))?);
+    }
+    let creator_sig =
+        ids::unb64(&v.creator_sig).map_err(|_| AppError::BadRequest("vouch creator_sig b64"))?;
+
+    let meta = db::rooms::meta_by_id(db, &room_id)
+        .await?
+        .ok_or(AppError::BadRequest("vouch room not found"))?;
+    if !meta.vouching_enabled {
+        return Err(AppError::Forbidden("vouching is not enabled for that room"));
+    }
+    if v.roster_epoch != meta.roster_epoch {
+        return Err(AppError::Conflict("vouch cites a stale roster epoch"));
+    }
+    let stored = db::rooms::roster_at(db, &room_id, v.roster_epoch)
+        .await?
+        .ok_or(AppError::Conflict("roster epoch missing"))?;
+    if stored.member_sig_pubkeys != ring || stored.creator_sig != creator_sig {
+        return Err(AppError::Forbidden("vouch ring does not match the signed roster"));
+    }
+
+    crypto::verify_vouch(&crypto::VouchParts {
+        room_id: &room_id,
+        thread_id,
+        body,
+        roster_epoch: v.roster_epoch,
+        ring: &ring,
+        key_image: &key_image,
+        c0: &c0,
+        s: &s,
+    })?;
+
+    let json = serde_json::to_string(v).map_err(|_| AppError::Internal("vouch serialize"))?;
+    Ok((json, room_id))
 }
 
 /// Maps a moderation reason to a stable static string suitable for an
@@ -173,6 +256,11 @@ pub async fn create_post(
         _ => return Err(AppError::BadRequest("pubkey/signature must come together")),
     };
 
+    let vouch = match &req.vouch {
+        Some(v) => Some(validate_vouch(db, v, &thread_id, &req.body).await?),
+        None => None,
+    };
+
     let now = ltime::today_utc();
     let inserted = db::posts::insert(
         db,
@@ -184,6 +272,7 @@ pub async fn create_post(
             signature: signature_bytes.as_deref(),
             created_at: now,
             origin_server_id: server_pubkey,
+            vouch: vouch.as_ref().map(|(json, room)| (json.as_str(), room.as_slice())),
         },
     )
     .await?;

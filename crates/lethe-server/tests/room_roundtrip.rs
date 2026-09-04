@@ -147,9 +147,17 @@ async fn room_e2ee_roundtrip_with_provenance() {
         .unwrap();
     assert!(wrap_resp.status().is_success());
 
-    // 5. Bob fetches members, finds his own wrapped key, unwraps it.
+    // 5. Bob fetches members (member-only, signed), finds his own
+    //    wrapped key, unwraps it.
+    let mts = time::OffsetDateTime::now_utc().unix_timestamp();
+    let msig = browser::sign_members_request(&room_id_bytes_for_wrap, mts, &bob.sig_priv);
     let members: MembersResp = client
-        .get(format!("{}/api/rooms/{}/members", s.base_url, create_resp.room_id))
+        .post(format!("{}/api/rooms/{}/members", s.base_url, create_resp.room_id))
+        .json(&json!({
+            "requester_sig_pubkey": browser::b64(&bob.sig_pub),
+            "ts": mts,
+            "sig": browser::b64(&msig),
+        }))
         .send()
         .await
         .unwrap()

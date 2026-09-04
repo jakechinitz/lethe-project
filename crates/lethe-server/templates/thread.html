@@ -9,6 +9,10 @@
 <p class="crumbs"><a href="/b/{{ board_id }}">/{{ board_id }}/</a> &raquo;</p>
 <h1>{{ title }}</h1>
 
+<nav class="view-switch" id="view-switch" aria-label="View"></nav>
+<p class="view-note" id="view-note"></p>
+<p class="hint" id="vouch-summary"></p>
+
 <section id="posts" class="posts" aria-busy="true">
   <p class="muted">Loading…</p>
 </section>
@@ -25,6 +29,20 @@
       Clearing browser data destroys it. There is no recovery.
     </p>
     <button type="button" id="forget-identity" hidden>Forget identity for this thread</button>
+  </div>
+  <div class="vouch-toggle">
+    <label>
+      Vouch as a member of
+      <select id="vouch-room">
+        <option value="" selected>No vouch</option>
+      </select>
+    </label>
+    <p class="hint" id="vouch-hint">
+      A vouch proves "someone in that room wrote this" without revealing
+      who. Readers who trust the room can filter to vouched posts.
+      Vouching <strong>without</strong> a thread identity is the most
+      private option: the post is attached to nothing but the room.
+    </p>
   </div>
   <form id="reply-form">
     <textarea name="body" rows="4" maxlength="16384" required></textarea>

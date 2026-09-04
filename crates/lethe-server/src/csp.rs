@@ -25,11 +25,14 @@ pub fn headers() -> &'static [(&'static str, &'static str)] {
     ]
 }
 
+//  `data:` in img-src is for the inline SVG caret on <select> in
+//  app.css. A data: URI is bytes embedded in our own stylesheet — no
+//  request leaves the browser, so it can neither track nor exfiltrate.
 const CSP: &str = "\
 default-src 'self'; \
 script-src 'self'; \
 style-src 'self'; \
-img-src 'self'; \
+img-src 'self' data:; \
 connect-src 'self'; \
 font-src 'self'; \
 base-uri 'none'; \

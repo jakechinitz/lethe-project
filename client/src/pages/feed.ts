@@ -6,6 +6,9 @@ import { b64encode, utf8 } from "../lib/b64";
 import { findNonce } from "../lib/pow";
 import { sodium } from "../lib/sodium";
 import * as tkey from "../lib/threadkey";
+import * as roomkey from "../lib/roomkey";
+import * as vouch from "../lib/vouch";
+import * as netview from "../lib/netview";
 
 interface FeedItem {
   thread_id: string;
@@ -14,7 +17,13 @@ interface FeedItem {
   created_at: string;
   last_post_at: string;
   post_count: number;
+  /// Room the OP *claims* a vouch from. Not verified here — the thread
+  /// page verifies. Enough to pre-filter by trusted rooms.
+  op_vouch_room_id?: string;
+  /// Distinct rooms claimed by any post in the thread (OP or reply).
+  vouch_room_ids?: string[];
 }
+
 
 interface FeedResp {
   items: FeedItem[];
@@ -30,6 +39,58 @@ const feedEl = $<HTMLElement>("#feed");
 const feedEnd = $<HTMLElement>("#feed-end");
 const form = $<HTMLFormElement>("#new-thread-form");
 const status = $<HTMLParagraphElement>("#new-thread-status");
+const vouchSelect = $<HTMLSelectElement>("#vouch-room");
+const viewNote = $<HTMLParagraphElement>("#view-note");
+
+{
+  let n = 0;
+  for (const id of roomkey.listRoomIds()) {
+    const keys = roomkey.read(id);
+    if (!keys || keys.roomKeys.length === 0) continue;
+    const label = vouch.trustedLabel(id) ?? `Room ${id.slice(0, 8)}`;
+    vouchSelect.appendChild(el("option", { value: id }, [label]));
+    n++;
+  }
+  // No rooms to vouch as: hide the selector and its hint.
+  if (n === 0) {
+    const label = vouchSelect.closest("label");
+    if (label) {
+      label.hidden = true;
+      const hint = label.nextElementSibling;
+      if (hint instanceof HTMLElement && hint.classList.contains("hint")) hint.hidden = true;
+    }
+  }
+}
+
+/// All / My network / Room X. The feed only knows which room the first
+/// post *claims*; the thread page verifies on open.
+let view: netview.View = netview.mount($<HTMLElement>("#view-switch"), (v) => {
+  view = v;
+  applyFeedFilter();
+  renderViewNote();
+});
+renderViewNote();
+
+function renderViewNote(): void {
+  switch (view.kind) {
+    case "all":
+      text(viewNote, "");
+      break;
+    case "network":
+      text(viewNote, "Threads where any post claims a vouch from a room you belong to or trust. Verified when you open the thread.");
+      break;
+    case "room":
+      text(viewNote, `Threads where any post claims a vouch from ${vouch.networkLabel(view.roomId) ?? "that room"}. Verified when you open the thread.`);
+      break;
+  }
+}
+
+function applyFeedFilter(): void {
+  for (const item of feedEl.querySelectorAll<HTMLElement>(".feed-item")) {
+    const rooms = (item.dataset.vouchRooms || "").split(" ").filter(Boolean);
+    item.classList.toggle("vouch-hidden", !netview.passesAny(view, rooms));
+  }
+}
 
 const CATEGORY_LABELS: Record<string, string> = {
   government: "Government",
@@ -74,6 +135,7 @@ async function loadMore(): Promise<void> {
     for (const item of body.items) {
       feedEl.appendChild(renderItem(item));
     }
+    applyFeedFilter();
     if (body.items.length === 0) {
       exhausted = true;
       feedEnd.hidden = false;
@@ -100,14 +162,44 @@ function renderItem(item: FeedItem): HTMLElement {
 
   const label = CATEGORY_LABELS[item.board_id] ?? item.board_id;
   const replies = Math.max(0, item.post_count - 1);
-  article.appendChild(
-    el("div", { class: "feed-meta" }, [
-      el("span", { class: "badge cat" }, [label]),
-      ` · `,
-      `${replies} ${replies === 1 ? "reply" : "replies"}`,
-      ` · last activity ${formatPostTimestamp(item.last_post_at)}`,
-    ]),
-  );
+  const metaChildren: Array<Node | string> = [
+    el("span", { class: "badge cat" }, [label]),
+    ` · `,
+    `${replies} ${replies === 1 ? "reply" : "replies"}`,
+    ` · last activity ${formatPostTimestamp(item.last_post_at)}`,
+  ];
+  const rooms = item.vouch_room_ids ?? (item.op_vouch_room_id ? [item.op_vouch_room_id] : []);
+  article.dataset.vouchRooms = rooms.join(" ");
+  if (rooms.length > 0) {
+    // Prefer network rooms for the label; say whether it's the OP or a
+    // reply that carries the vouch.
+    const opLabel = item.op_vouch_room_id ? vouch.networkLabel(item.op_vouch_room_id) : null;
+    const replyLabels = rooms
+      .filter((r) => r !== item.op_vouch_room_id)
+      .map((r) => vouch.networkLabel(r))
+      .filter((l): l is string => l !== null);
+    let textLabel: string;
+    let trusted = true;
+    if (opLabel) {
+      textLabel = `vouched: ${opLabel}`;
+    } else if (replyLabels.length > 0) {
+      textLabel = `replies vouched: ${[...new Set(replyLabels)].join(", ")}`;
+    } else if (item.op_vouch_room_id) {
+      textLabel = `vouched: room ${item.op_vouch_room_id.slice(0, 8)}…`;
+      trusted = false;
+    } else {
+      textLabel = `replies vouched by ${rooms.length} room${rooms.length === 1 ? "" : "s"} you don't follow`;
+      trusted = false;
+    }
+    const tag = el(
+      "span",
+      { class: `vouch-badge feed-vouch ${trusted ? "trusted" : "untrusted"}` },
+      [textLabel],
+    );
+    tag.title = "Claimed by posts in the thread; verified when you open it";
+    metaChildren.push(" · ", tag);
+  }
+  article.appendChild(el("div", { class: "feed-meta" }, metaChildren));
   return article;
 }
 
@@ -169,6 +261,21 @@ async function onSubmit(ev: SubmitEvent): Promise<void> {
     reqBody.pubkey = b64encode(kp.publicKey);
     reqBody.signature = b64encode(sig);
     pendingKey = { publicKey: kp.publicKey, privateKey: kp.privateKey };
+  }
+
+  if (vouchSelect.value) {
+    const keys = roomkey.read(vouchSelect.value);
+    if (!keys) {
+      text(status, "No keys for the selected room on this device.");
+      return;
+    }
+    text(status, "Building room vouch…");
+    try {
+      reqBody.vouch = await vouch.buildVouch(vouchSelect.value, threadIdBytes, body, keys);
+    } catch (e) {
+      text(status, `Vouch failed: ${(e as Error).message}`);
+      return;
+    }
   }
 
   text(status, "Submitting…");
