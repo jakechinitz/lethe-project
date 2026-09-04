@@ -10,6 +10,7 @@ import { findNonce } from "../lib/pow";
 import * as tkey from "../lib/threadkey";
 import * as roomkey from "../lib/roomkey";
 import * as vouch from "../lib/vouch";
+import * as netview from "../lib/netview";
 import { limitations } from "../lib/strings";
 
 const threadIdB64 = meta("lethe-thread-id");
@@ -23,27 +24,40 @@ const claim = $<HTMLInputElement>("#claim-identity");
 const forgetBtn = $<HTMLButtonElement>("#forget-identity");
 const vouchSelect = $<HTMLSelectElement>("#vouch-room");
 const vouchHint = $<HTMLParagraphElement>("#vouch-hint");
-const trustedOnly = $<HTMLInputElement>("#trusted-only");
 const vouchSummary = $<HTMLParagraphElement>("#vouch-summary");
+const viewNote = $<HTMLParagraphElement>("#view-note");
 
 const MAX_DEPTH = 2;
-const TRUSTED_ONLY_PREF = "lethe.pref.trustedOnly";
 
 /// Verified vouch verdicts by post seq, filled asynchronously after
-/// each render. Drives badges, the trusted-only filter, and the
+/// each render. Drives badges, the view filter, and the
 /// distinct-voucher summary.
 const verdicts = new Map<number, vouch.VouchVerdict>();
-/// key_image → first seq seen with it, for "same voucher as #N".
 let currentPosts: PostView[] = [];
 
-populateVouchSelect();
-try {
-  trustedOnly.checked = localStorage.getItem(TRUSTED_ONLY_PREF) === "1";
-} catch { /* storage unavailable; default off */ }
-trustedOnly.addEventListener("change", () => {
-  try { localStorage.setItem(TRUSTED_ONLY_PREF, trustedOnly.checked ? "1" : "0"); } catch { /* ignore */ }
+/// All / My network / Room X — computed on the device, remembered.
+let view: netview.View = netview.mount($<HTMLElement>("#view-switch"), (v) => {
+  view = v;
   applyVouchFilter();
+  renderViewNote();
 });
+renderViewNote();
+
+function renderViewNote(): void {
+  switch (view.kind) {
+    case "all":
+      text(viewNote, "");
+      break;
+    case "network":
+      text(viewNote, "Showing posts whose authors proved membership in a room you belong to or trust. Verified on this device.");
+      break;
+    case "room":
+      text(viewNote, `Showing posts vouched by ${vouch.networkLabel(view.roomId) ?? "that room"}. Verified on this device.`);
+      break;
+  }
+}
+
+populateVouchSelect();
 vouchSelect.addEventListener("change", updateVouchHint);
 claim.addEventListener("change", updateVouchHint);
 
@@ -242,14 +256,16 @@ function renderSameVoucherMarks(): void {
 }
 
 function applyVouchFilter(): void {
-  const on = trustedOnly.checked;
   for (const p of currentPosts) {
     const article = document.querySelector<HTMLElement>(`#p${p.seq}`);
     if (!article) continue;
     const v = verdicts.get(p.seq);
-    const passes = !!v && v.ok && !!v.trustedLabel;
-    article.classList.toggle("vouch-hidden", on && !passes && p.seq !== 1);
-    article.classList.toggle("vouch-dim", on && !passes && p.seq === 1);
+    // Only a *verified* vouch counts toward a view; a pending or
+    // failed one is treated as unvouched.
+    const vouchedRoom = v && v.ok ? v.roomId : null;
+    const passes = netview.passes(view, vouchedRoom);
+    article.classList.toggle("vouch-hidden", !passes && p.seq !== 1);
+    article.classList.toggle("vouch-dim", !passes && p.seq === 1);
   }
 }
 

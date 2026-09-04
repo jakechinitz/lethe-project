@@ -324,8 +324,20 @@ How it works, end to end:
   it is curated, not open.
 - **Trust is a local list.** "My rooms" → "Rooms I trust" holds room
   ids and labels in `localStorage` only; the server never learns which
-  rooms a reader trusts or that they filtered. Thread and feed pages
-  get an "only rooms I trust" toggle.
+  rooms a reader trusts or that they filtered.
+- **Three views of one forum.** The front page and every thread carry
+  a switch — **All** / **My network** / **Room X** — computed entirely
+  on the device (`client/src/lib/netview.ts`). *My network* is posts
+  whose authors *chose* to prove membership in a room you belong to or
+  trust; it is not "everything secretly written by people you know."
+  Once you have any rooms, *My network* becomes your remembered
+  default; *All* — the anonymous public commons — is always one tap
+  away and never removed. The server serves everyone the same posts
+  and the same public proofs; each browser decides which proofs it
+  cares about, so two people can read the same forum and see different
+  versions of it without the forum knowing why. One vouch per post:
+  multi-room vouches are deliberately not offered, because the
+  intersection of two rosters can shrink the anonymity set to one.
 
 Privacy notes worth reading before enabling it:
 

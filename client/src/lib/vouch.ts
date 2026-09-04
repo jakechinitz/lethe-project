@@ -9,7 +9,7 @@
 import { api, RosterResp, VouchPayload } from "./api";
 import { b64decode, b64encode, bytesEqual, concat, utf8 } from "./b64";
 import * as ringsig from "./ringsig";
-import type { RoomKeys } from "./roomkey";
+import { listRoomIds, type RoomKeys } from "./roomkey";
 import { sodium } from "./sodium";
 
 const TRUST_PREFIX = "lethe.trust.";
@@ -48,6 +48,39 @@ export function trustedLabel(roomId: string): string | null {
   } catch {
     return `Room ${roomId.slice(0, 8)}`;
   }
+}
+
+export interface NetworkRoom {
+  roomId: string;
+  label: string;
+  /// True when this browser holds member keys for the room (as opposed
+  /// to trusting it from outside).
+  member: boolean;
+}
+
+/// Your network: rooms you hold keys for, plus rooms you've explicitly
+/// trusted. Membership implies trust by default; a label from the
+/// trusted list overrides the generic "Room xxxxxxxx" name.
+export function networkRooms(): NetworkRoom[] {
+  const byId = new Map<string, NetworkRoom>();
+  for (const roomId of listRoomIds()) {
+    byId.set(roomId, {
+      roomId,
+      label: trustedLabel(roomId) ?? `Room ${roomId.slice(0, 8)}`,
+      member: true,
+    });
+  }
+  for (const t of listTrusted()) {
+    if (!byId.has(t.roomId)) byId.set(t.roomId, { roomId: t.roomId, label: t.label, member: false });
+  }
+  return [...byId.values()].sort((a, b) => a.label.localeCompare(b.label));
+}
+
+/// Label for a room in your network, or null if it isn't in it.
+export function networkLabel(roomId: string): string | null {
+  const t = trustedLabel(roomId);
+  if (t !== null) return t;
+  return listRoomIds().includes(roomId) ? `Room ${roomId.slice(0, 8)}` : null;
 }
 
 export function setTrusted(roomId: string, label: string): void {
@@ -155,7 +188,8 @@ export async function buildVouch(
 export interface VouchVerdict {
   ok: boolean;
   roomId: string;
-  /// Reader's local label if the room is trusted, else null.
+  /// Reader's local label if the room is in their network (member or
+  /// explicitly trusted), else null.
   trustedLabel: string | null;
   /// Why it failed, for the UI. Empty when ok.
   reason: string;
@@ -181,7 +215,7 @@ export async function verifyVouch(
   body: string,
 ): Promise<VouchVerdict> {
   const roomIdB64 = vouch.room_id;
-  const trusted = trustedLabel(roomIdB64);
+  const trusted = networkLabel(roomIdB64);
   const fail = (reason: string): VouchVerdict => ({
     ok: false, roomId: roomIdB64, trustedLabel: trusted, reason,
   });

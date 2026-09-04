@@ -8,6 +8,7 @@ import { sodium } from "../lib/sodium";
 import * as tkey from "../lib/threadkey";
 import * as roomkey from "../lib/roomkey";
 import * as vouch from "../lib/vouch";
+import * as netview from "../lib/netview";
 
 interface FeedItem {
   thread_id: string;
@@ -21,7 +22,6 @@ interface FeedItem {
   op_vouch_room_id?: string;
 }
 
-const FEED_TRUSTED_ONLY_PREF = "lethe.pref.feedTrustedOnly";
 
 interface FeedResp {
   items: FeedItem[];
@@ -38,7 +38,7 @@ const feedEnd = $<HTMLElement>("#feed-end");
 const form = $<HTMLFormElement>("#new-thread-form");
 const status = $<HTMLParagraphElement>("#new-thread-status");
 const vouchSelect = $<HTMLSelectElement>("#vouch-room");
-const trustedOnly = $<HTMLInputElement>("#trusted-only");
+const viewNote = $<HTMLParagraphElement>("#view-note");
 
 for (const id of roomkey.listRoomIds()) {
   const keys = roomkey.read(id);
@@ -46,19 +46,34 @@ for (const id of roomkey.listRoomIds()) {
   const label = vouch.trustedLabel(id) ?? `Room ${id.slice(0, 8)}`;
   vouchSelect.appendChild(el("option", { value: id }, [label]));
 }
-try {
-  trustedOnly.checked = localStorage.getItem(FEED_TRUSTED_ONLY_PREF) === "1";
-} catch { /* storage unavailable */ }
-trustedOnly.addEventListener("change", () => {
-  try { localStorage.setItem(FEED_TRUSTED_ONLY_PREF, trustedOnly.checked ? "1" : "0"); } catch { /* ignore */ }
+
+/// All / My network / Room X. The feed only knows which room the first
+/// post *claims*; the thread page verifies on open.
+let view: netview.View = netview.mount($<HTMLElement>("#view-switch"), (v) => {
+  view = v;
   applyFeedFilter();
+  renderViewNote();
 });
+renderViewNote();
+
+function renderViewNote(): void {
+  switch (view.kind) {
+    case "all":
+      text(viewNote, "");
+      break;
+    case "network":
+      text(viewNote, "Threads whose first post claims a vouch from a room you belong to or trust. Verified when you open the thread.");
+      break;
+    case "room":
+      text(viewNote, `Threads whose first post claims a vouch from ${vouch.networkLabel(view.roomId) ?? "that room"}. Verified when you open the thread.`);
+      break;
+  }
+}
 
 function applyFeedFilter(): void {
-  const on = trustedOnly.checked;
   for (const item of feedEl.querySelectorAll<HTMLElement>(".feed-item")) {
-    const trusted = item.dataset.vouchTrusted === "1";
-    item.classList.toggle("vouch-hidden", on && !trusted);
+    const room = item.dataset.vouchRoom || null;
+    item.classList.toggle("vouch-hidden", !netview.passes(view, room));
   }
 }
 
@@ -139,17 +154,15 @@ function renderItem(item: FeedItem): HTMLElement {
     ` · last activity ${formatPostTimestamp(item.last_post_at)}`,
   ];
   if (item.op_vouch_room_id) {
-    const trustedLabel = vouch.trustedLabel(item.op_vouch_room_id);
-    article.dataset.vouchTrusted = trustedLabel ? "1" : "0";
+    const label = vouch.networkLabel(item.op_vouch_room_id);
+    article.dataset.vouchRoom = item.op_vouch_room_id;
     const tag = el(
       "span",
-      { class: `vouch-badge feed-vouch ${trustedLabel ? "trusted" : "untrusted"}` },
-      [trustedLabel ? `claims vouch: ${trustedLabel}` : `claims vouch: room ${item.op_vouch_room_id.slice(0, 8)}…`],
+      { class: `vouch-badge feed-vouch ${label ? "trusted" : "untrusted"}` },
+      [label ? `vouched: ${label}` : `vouched: room ${item.op_vouch_room_id.slice(0, 8)}…`],
     );
     tag.title = "Claimed by the first post; verified when you open the thread";
     metaChildren.push(" · ", tag);
-  } else {
-    article.dataset.vouchTrusted = "0";
   }
   article.appendChild(el("div", { class: "feed-meta" }, metaChildren));
   return article;
