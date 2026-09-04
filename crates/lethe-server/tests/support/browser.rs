@@ -21,7 +21,7 @@ type Signature = [u8; 64];
 type SigningPublicKey = [u8; 32];
 type SigningSecretKey = [u8; 64];
 type BoxSecretKey = [u8; 32];
-use sha2::{Digest, Sha256};
+use sha2::{Digest, Sha256, Sha512};
 
 pub fn b64(bytes: &[u8]) -> String {
     URL_SAFE_NO_PAD.encode(bytes)
@@ -80,6 +80,141 @@ pub fn sign_post(thread_id: &[u8], body: &str, sk: &SigningSecretKey) -> Signatu
     let mut sig: Signature = [0u8; 64];
     crypto_sign_detached(&mut sig, &payload, sk).expect("sign");
     sig
+}
+
+pub fn sign_members_request(room_id: &[u8], ts: i64, sk: &SigningSecretKey) -> Signature {
+    let payload = lethe_types::rooms::canonical_members_request(room_id, ts);
+    let mut sig: Signature = [0u8; 64];
+    crypto_sign_detached(&mut sig, &payload, sk).expect("sign");
+    sig
+}
+
+pub fn sign_roster(
+    room_id: &[u8],
+    epoch: i32,
+    ring: &[Vec<u8>],
+    creator_sk: &SigningSecretKey,
+) -> Signature {
+    let payload = lethe_types::rooms::canonical_roster(room_id, epoch, ring);
+    let mut sig: Signature = [0u8; 64];
+    crypto_sign_detached(&mut sig, &payload, creator_sk).expect("sign");
+    sig
+}
+
+/// Ed25519 secret scalar from a 64-byte libsodium-style secret key
+/// (seed || pubkey): SHA-512(seed)[..32], clamped, reduced mod l.
+/// Mirrors `client/src/lib/ringsig.ts::scalarFromSigningKey`.
+pub fn scalar_from_signing_key(sk: &SigningSecretKey) -> curve25519_dalek::scalar::Scalar {
+    let h = Sha512::digest(&sk[..32]);
+    let mut clamped = [0u8; 32];
+    clamped.copy_from_slice(&h[..32]);
+    clamped[0] &= 248;
+    clamped[31] &= 127;
+    clamped[31] |= 64;
+    curve25519_dalek::scalar::Scalar::from_bytes_mod_order(clamped)
+}
+
+/// Browser-equivalent LSAG signer. Produces a `VouchPayload` for
+/// `body` in `thread_id` as `signer` (a member of the room whose
+/// current roster is `ring`, already sorted). Byte-for-byte the same
+/// construction as `client/src/lib/ringsig.ts`.
+#[allow(deprecated)] // nonspec_map_to_curve: deliberate, see crypto::verify_vouch
+pub fn build_vouch(
+    room_id: &[u8],
+    thread_id: &[u8],
+    body: &str,
+    roster_epoch: i32,
+    creator_sig: &[u8],
+    ring: &[Vec<u8>],
+    signer: &MemberKeys,
+) -> lethe_types::posts::VouchPayload {
+    use curve25519_dalek::constants::ED25519_BASEPOINT_TABLE;
+    use curve25519_dalek::edwards::{CompressedEdwardsY, EdwardsPoint};
+    use curve25519_dalek::scalar::Scalar;
+    use lethe_types::posts::{vouch_challenge_input, vouch_key_image_input, vouch_message_input};
+    use rand::RngCore as _;
+
+    let n = ring.len();
+    let signer_index = ring
+        .iter()
+        .position(|p| p.as_slice() == &signer.sig_pub[..])
+        .expect("signer must be in ring");
+    let x = scalar_from_signing_key(&signer.sig_priv);
+
+    let points: Vec<EdwardsPoint> = ring
+        .iter()
+        .map(|p| {
+            let mut a = [0u8; 32];
+            a.copy_from_slice(p);
+            CompressedEdwardsY(a).decompress().expect("ring point")
+        })
+        .collect();
+    let bases: Vec<EdwardsPoint> = ring
+        .iter()
+        .map(|p| {
+            EdwardsPoint::nonspec_map_to_curve::<Sha512>(&vouch_key_image_input(
+                room_id, thread_id, p,
+            ))
+        })
+        .collect();
+    let key_image = (x * bases[signer_index]).compress().to_bytes();
+
+    let body_hash: [u8; 32] = Sha256::digest(body.as_bytes()).into();
+    let m: [u8; 64] = Sha512::digest(vouch_message_input(
+        room_id,
+        thread_id,
+        &body_hash,
+        roster_epoch,
+        ring,
+        &key_image,
+    ))
+    .into();
+    let ki_point = CompressedEdwardsY(key_image).decompress().unwrap();
+
+    let challenge = |l: &EdwardsPoint, r: &EdwardsPoint| -> Scalar {
+        let wide: [u8; 64] = Sha512::digest(vouch_challenge_input(
+            &m,
+            &l.compress().to_bytes(),
+            &r.compress().to_bytes(),
+        ))
+        .into();
+        Scalar::from_bytes_mod_order_wide(&wide)
+    };
+    let random_scalar = || {
+        let mut b = [0u8; 64];
+        rand::thread_rng().fill_bytes(&mut b);
+        Scalar::from_bytes_mod_order_wide(&b)
+    };
+
+    let mut c: Vec<Option<Scalar>> = vec![None; n];
+    let mut s: Vec<Option<Scalar>> = vec![None; n];
+
+    let alpha = random_scalar();
+    let l_pi = &alpha * ED25519_BASEPOINT_TABLE;
+    let r_pi = alpha * bases[signer_index];
+    c[(signer_index + 1) % n] = Some(challenge(&l_pi, &r_pi));
+
+    for k in 1..n {
+        let i = (signer_index + k) % n;
+        let s_i = random_scalar();
+        s[i] = Some(s_i);
+        let c_i = c[i].unwrap();
+        let l = &s_i * ED25519_BASEPOINT_TABLE + c_i * points[i];
+        let r = s_i * bases[i] + c_i * ki_point;
+        c[(i + 1) % n] = Some(challenge(&l, &r));
+    }
+    let c_pi = c[signer_index].unwrap();
+    s[signer_index] = Some(alpha - c_pi * x);
+
+    lethe_types::posts::VouchPayload {
+        room_id: b64(room_id),
+        roster_epoch,
+        creator_sig: b64(creator_sig),
+        ring: ring.iter().map(|p| b64(p)).collect(),
+        key_image: b64(&key_image),
+        c0: b64(&c[0].unwrap().to_bytes()),
+        s: s.iter().map(|v| b64(&v.unwrap().to_bytes())).collect(),
+    }
 }
 
 pub fn sign_post_delete(post_id: &[u8], ts: i64, sk: &SigningSecretKey) -> Signature {

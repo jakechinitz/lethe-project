@@ -51,8 +51,12 @@ export const api = {
     ),
   wrap: (roomId: string, body: unknown) =>
     call<void>(`/api/rooms/${roomId}/wrap`, { method: "POST", body }),
-  members: (roomId: string) =>
-    call<MembersResp>(`/api/rooms/${roomId}/members`, { method: "GET" }),
+  members: (roomId: string, body: unknown) =>
+    call<MembersResp>(`/api/rooms/${roomId}/members`, { method: "POST", body }),
+  roster: (roomId: string) =>
+    call<RosterResp>(`/api/rooms/${roomId}/roster`, { method: "GET" }),
+  postRoster: (roomId: string, body: unknown) =>
+    call<void>(`/api/rooms/${roomId}/roster`, { method: "POST", body }),
   provenance: (roomId: string) =>
     call<ProvenanceView>(`/api/rooms/${roomId}/provenance`, { method: "GET" }),
   sendMessage: (roomId: string, body: unknown) =>
@@ -89,6 +93,27 @@ export interface PostView {
   /// list. May be absent even when origin_server_id is set (peer was
   /// added without a label).
   origin_server_label?: string;
+  /// Room vouch, verified locally by `lib/vouch.ts` — never trust the
+  /// server's word for it.
+  vouch?: VouchPayload;
+}
+
+export interface VouchPayload {
+  room_id: string;
+  roster_epoch: number;
+  creator_sig: string;
+  ring: string[];
+  key_image: string;
+  c0: string;
+  s: string[];
+}
+
+export interface RosterResp {
+  room_id: string;
+  creator_sig_pubkey: string;
+  epoch: number;
+  member_sig_pubkeys: string[];
+  creator_sig: string;
 }
 
 export interface MemberView {
@@ -104,6 +129,8 @@ export interface MembersResp {
   members: MemberView[];
   current_epoch: number;
   message_retention_days: number;
+  vouching_enabled: boolean;
+  roster_epoch: number;
 }
 
 export interface ProvenanceView {

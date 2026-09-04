@@ -3,10 +3,11 @@
 // rotates the room key to cut off a removed member from future
 // messages while keeping historical messages decryptable for survivors.
 
-import { api, MemberView, MessageView, ProvenanceView } from "../lib/api";
+import { api, MemberView, MembersResp, MessageView, ProvenanceView } from "../lib/api";
 import { $, clear, el, formatPostTimestamp, meta, text } from "../lib/dom";
 import { b64decode, b64encode, bytesEqual, fromUtf8 } from "../lib/b64";
 import * as roomkey from "../lib/roomkey";
+import * as vouch from "../lib/vouch";
 import { trust } from "../lib/strings";
 
 const roomIdB64 = meta("lethe-room-id");
@@ -100,10 +101,31 @@ async function renderProvenance(): Promise<void> {
   );
 }
 
+/// Guards against two ticks landing in the same second, which would
+/// share a replay nonce and get the second one rejected.
+let membersInFlight = false;
+
 async function tickMembers(): Promise<void> {
   const keys = roomkey.read(roomIdB64);
   if (!keys) return;
-  const resp = await api.members(roomIdB64);
+  if (membersInFlight) return;
+  membersInFlight = true;
+  let resp: MembersResp;
+  try {
+    // The member list is member-only: sign a fresh, replay-protected
+    // request with our per-room signing key.
+    const ts = Math.floor(Date.now() / 1000);
+    const sig = await roomkey.signMembersRequest(roomIdBytes, ts, keys.sigPriv);
+    resp = await api.members(roomIdB64, {
+      requester_sig_pubkey: b64encode(keys.sigPub),
+      ts,
+      sig: b64encode(sig),
+    });
+  } catch {
+    membersInFlight = false;
+    return; // transient (or we've been removed); next tick retries
+  }
+  membersInFlight = false;
   memberCache = resp.members;
   currentEpoch = resp.current_epoch;
   renderRetentionNote(resp.message_retention_days);
@@ -119,6 +141,93 @@ async function tickMembers(): Promise<void> {
     await maybeUnwrap(keys, resp.members);
   }
   renderMembers(resp.members);
+  await maintainVouching(keys, resp);
+}
+
+/// Accepted (wrapped) and active members' signing keys, in canonical
+/// ring order — must match the server's `accepted_active_sig_pubkeys`.
+function acceptedRing(members: MemberView[]): Uint8Array[] {
+  return vouch.canonicalRing(
+    members
+      .filter((m) => !m.removed_at && !!m.wrapped_key)
+      .map((m) => b64decode(m.sig_pubkey)),
+  );
+}
+
+async function publishRoster(keys: roomkey.RoomKeys, epoch: number, ring: Uint8Array[]): Promise<void> {
+  const sig = await vouch.signRoster(roomIdBytes, epoch, ring, keys.sigPriv);
+  await api.postRoster(roomIdB64, {
+    epoch,
+    member_sig_pubkeys: ring.map(b64encode),
+    creator_sig: b64encode(sig),
+  });
+}
+
+/// Creator: keep the signed roster in step with membership. Everyone:
+/// show status and a "trust this room" shortcut.
+async function maintainVouching(keys: roomkey.RoomKeys, resp: MembersResp): Promise<void> {
+  const statusEl = document.querySelector<HTMLElement>("#vouching-status");
+  const actions = document.querySelector<HTMLElement>("#vouching-actions");
+  if (!statusEl || !actions) return;
+  clear(actions);
+
+  const ring = acceptedRing(resp.members);
+
+  if (resp.vouching_enabled && amCreator) {
+    // Re-sign if the live accepted set differs from the published one.
+    try {
+      const roster = await api.roster(roomIdB64);
+      const published = vouch.canonicalRing(roster.member_sig_pubkeys.map(b64decode));
+      const same =
+        published.length === ring.length &&
+        published.every((p, i) => bytesEqual(p, ring[i]));
+      if (!same) {
+        await publishRoster(keys, roster.epoch + 1, ring);
+        text(statusEl, `Vouching on · roster re-signed (epoch ${roster.epoch + 1}, ${ring.length} keys public)`);
+        return;
+      }
+      text(statusEl, `Vouching on · roster epoch ${roster.epoch} · ${ring.length} member signing key${ring.length === 1 ? "" : "s"} public`);
+    } catch (e) {
+      text(statusEl, `Vouching on · could not refresh roster: ${(e as Error).message}`);
+    }
+  } else if (resp.vouching_enabled) {
+    text(statusEl, `Vouching on · roster epoch ${resp.roster_epoch} · ${ring.length} member signing key${ring.length === 1 ? "" : "s"} public`);
+  } else if (amCreator) {
+    text(statusEl, "Vouching is off. Only you (the creator) can turn it on.");
+    const btn = el("button", { type: "button" }, ["Enable vouching for this room"]);
+    btn.addEventListener("click", async () => {
+      if (!confirm(
+          "Enable vouching? This publishes the list of member signing keys " +
+            "and the room's size so readers can verify vouches. It does not " +
+            "reveal messages, box keys, join dates, or who invited whom. " +
+            "There is no way to un-publish a roster once it's out.",
+        )) {
+        return;
+      }
+      try {
+        await publishRoster(keys, 1, ring);
+        await tickMembers();
+      } catch (e) {
+        alert(`Could not enable vouching: ${(e as Error).message}`);
+      }
+    });
+    actions.appendChild(btn);
+  } else {
+    text(statusEl, "Vouching is off for this room (only the creator can turn it on).");
+  }
+
+  // Everyone can trust the room locally, regardless of vouching state.
+  const already = vouch.trustedLabel(roomIdB64);
+  const trustBtn = el("button", { type: "button" }, [
+    already ? `Trusted on this device as "${already}"` : "Trust this room's vouches on this device",
+  ]);
+  trustBtn.addEventListener("click", () => {
+    const label = prompt("Label for this room (shown on vouched posts, kept only in this browser):", already ?? "");
+    if (!label) return;
+    vouch.setTrusted(roomIdB64, label.trim().slice(0, 60));
+    void tickMembers();
+  });
+  actions.appendChild(trustBtn);
 }
 
 /// Replaces the template's placeholder with the room's actual

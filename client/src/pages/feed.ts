@@ -6,6 +6,8 @@ import { b64encode, utf8 } from "../lib/b64";
 import { findNonce } from "../lib/pow";
 import { sodium } from "../lib/sodium";
 import * as tkey from "../lib/threadkey";
+import * as roomkey from "../lib/roomkey";
+import * as vouch from "../lib/vouch";
 
 interface FeedItem {
   thread_id: string;
@@ -14,7 +16,12 @@ interface FeedItem {
   created_at: string;
   last_post_at: string;
   post_count: number;
+  /// Room the OP *claims* a vouch from. Not verified here — the thread
+  /// page verifies. Enough to pre-filter by trusted rooms.
+  op_vouch_room_id?: string;
 }
+
+const FEED_TRUSTED_ONLY_PREF = "lethe.pref.feedTrustedOnly";
 
 interface FeedResp {
   items: FeedItem[];
@@ -30,6 +37,30 @@ const feedEl = $<HTMLElement>("#feed");
 const feedEnd = $<HTMLElement>("#feed-end");
 const form = $<HTMLFormElement>("#new-thread-form");
 const status = $<HTMLParagraphElement>("#new-thread-status");
+const vouchSelect = $<HTMLSelectElement>("#vouch-room");
+const trustedOnly = $<HTMLInputElement>("#trusted-only");
+
+for (const id of roomkey.listRoomIds()) {
+  const keys = roomkey.read(id);
+  if (!keys || keys.roomKeys.length === 0) continue;
+  const label = vouch.trustedLabel(id) ?? `Room ${id.slice(0, 8)}`;
+  vouchSelect.appendChild(el("option", { value: id }, [label]));
+}
+try {
+  trustedOnly.checked = localStorage.getItem(FEED_TRUSTED_ONLY_PREF) === "1";
+} catch { /* storage unavailable */ }
+trustedOnly.addEventListener("change", () => {
+  try { localStorage.setItem(FEED_TRUSTED_ONLY_PREF, trustedOnly.checked ? "1" : "0"); } catch { /* ignore */ }
+  applyFeedFilter();
+});
+
+function applyFeedFilter(): void {
+  const on = trustedOnly.checked;
+  for (const item of feedEl.querySelectorAll<HTMLElement>(".feed-item")) {
+    const trusted = item.dataset.vouchTrusted === "1";
+    item.classList.toggle("vouch-hidden", on && !trusted);
+  }
+}
 
 const CATEGORY_LABELS: Record<string, string> = {
   government: "Government",
@@ -74,6 +105,7 @@ async function loadMore(): Promise<void> {
     for (const item of body.items) {
       feedEl.appendChild(renderItem(item));
     }
+    applyFeedFilter();
     if (body.items.length === 0) {
       exhausted = true;
       feedEnd.hidden = false;
@@ -100,14 +132,26 @@ function renderItem(item: FeedItem): HTMLElement {
 
   const label = CATEGORY_LABELS[item.board_id] ?? item.board_id;
   const replies = Math.max(0, item.post_count - 1);
-  article.appendChild(
-    el("div", { class: "feed-meta" }, [
-      el("span", { class: "badge cat" }, [label]),
-      ` · `,
-      `${replies} ${replies === 1 ? "reply" : "replies"}`,
-      ` · last activity ${formatPostTimestamp(item.last_post_at)}`,
-    ]),
-  );
+  const metaChildren: Array<Node | string> = [
+    el("span", { class: "badge cat" }, [label]),
+    ` · `,
+    `${replies} ${replies === 1 ? "reply" : "replies"}`,
+    ` · last activity ${formatPostTimestamp(item.last_post_at)}`,
+  ];
+  if (item.op_vouch_room_id) {
+    const trustedLabel = vouch.trustedLabel(item.op_vouch_room_id);
+    article.dataset.vouchTrusted = trustedLabel ? "1" : "0";
+    const tag = el(
+      "span",
+      { class: `vouch-badge feed-vouch ${trustedLabel ? "trusted" : "untrusted"}` },
+      [trustedLabel ? `claims vouch: ${trustedLabel}` : `claims vouch: room ${item.op_vouch_room_id.slice(0, 8)}…`],
+    );
+    tag.title = "Claimed by the first post; verified when you open the thread";
+    metaChildren.push(" · ", tag);
+  } else {
+    article.dataset.vouchTrusted = "0";
+  }
+  article.appendChild(el("div", { class: "feed-meta" }, metaChildren));
   return article;
 }
 
@@ -169,6 +213,21 @@ async function onSubmit(ev: SubmitEvent): Promise<void> {
     reqBody.pubkey = b64encode(kp.publicKey);
     reqBody.signature = b64encode(sig);
     pendingKey = { publicKey: kp.publicKey, privateKey: kp.privateKey };
+  }
+
+  if (vouchSelect.value) {
+    const keys = roomkey.read(vouchSelect.value);
+    if (!keys) {
+      text(status, "No keys for the selected room on this device.");
+      return;
+    }
+    text(status, "Building room vouch…");
+    try {
+      reqBody.vouch = await vouch.buildVouch(vouchSelect.value, threadIdBytes, body, keys);
+    } catch (e) {
+      text(status, `Vouch failed: ${(e as Error).message}`);
+      return;
+    }
   }
 
   text(status, "Submitting…");

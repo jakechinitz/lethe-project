@@ -6,7 +6,10 @@
 // session resets.
 
 import { $, clear, el, text } from "../lib/dom";
+import { b64decode, b64encode } from "../lib/b64";
 import * as keyfile from "../lib/keyfile";
+import * as roomkey from "../lib/roomkey";
+import * as vouch from "../lib/vouch";
 
 interface StoredRoomV2 {
   v: 2;
@@ -24,11 +27,55 @@ const root = $<HTMLElement>("#my-rooms-list");
 const exportBtn = $<HTMLButtonElement>("#export-btn");
 const importInput = $<HTMLInputElement>("#import-input");
 const keyfileStatus = $<HTMLParagraphElement>("#keyfile-status");
+const trustedList = $<HTMLElement>("#trusted-list");
+const trustForm = $<HTMLFormElement>("#trust-form");
+const trustStatus = $<HTMLParagraphElement>("#trust-status");
 
 exportBtn.addEventListener("click", onExport);
 importInput.addEventListener("change", onImport);
+trustForm.addEventListener("submit", onTrustSubmit);
 
 main();
+renderTrusted();
+
+function renderTrusted(): void {
+  clear(trustedList);
+  const rooms = vouch.listTrusted();
+  if (rooms.length === 0) {
+    trustedList.appendChild(el("p", { class: "muted" }, ["No trusted rooms yet."]));
+    return;
+  }
+  for (const r of rooms) {
+    const row = el("div", { class: "trusted-row" });
+    row.appendChild(el("strong", {}, [r.label]));
+    row.appendChild(el("span", { class: "muted" }, [`room ${r.roomId.slice(0, 8)}…`]));
+    const rm = el("button", { type: "button", class: "remove-btn" }, ["Untrust"]);
+    rm.addEventListener("click", () => {
+      vouch.removeTrusted(r.roomId);
+      renderTrusted();
+    });
+    row.appendChild(rm);
+    trustedList.appendChild(row);
+  }
+}
+
+function onTrustSubmit(ev: SubmitEvent): void {
+  ev.preventDefault();
+  const data = new FormData(trustForm);
+  const roomId = String(data.get("room_id") ?? "").trim();
+  const label = String(data.get("label") ?? "").trim().slice(0, 60);
+  try {
+    if (b64decode(roomId).length !== 16) throw new Error("not a room id");
+  } catch {
+    text(trustStatus, "That doesn't look like a room id (22 urlsafe-base64 chars).");
+    return;
+  }
+  if (!label) return;
+  vouch.setTrusted(roomId, label);
+  trustForm.reset();
+  text(trustStatus, `Trusting "${label}".`);
+  renderTrusted();
+}
 
 async function main(): Promise<void> {
   const ids = roomIdsFromStorage();
@@ -62,7 +109,20 @@ function roomIdsFromStorage(): string[] {
 
 async function snapshot(roomId: string): Promise<Snapshot | null> {
   try {
-    const resp = await fetch(`/api/rooms/${roomId}/members`);
+    // Member list is member-only now; prove membership with our room key.
+    const keys = roomkey.read(roomId);
+    if (!keys) return null;
+    const ts = Math.floor(Date.now() / 1000);
+    const sig = await roomkey.signMembersRequest(b64decode(roomId), ts, keys.sigPriv);
+    const resp = await fetch(`/api/rooms/${roomId}/members`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        requester_sig_pubkey: b64encode(keys.sigPub),
+        ts,
+        sig: b64encode(sig),
+      }),
+    });
     if (!resp.ok) return null;
     const body: { current_epoch: number; members: Array<{ removed_at?: string | null }> } =
       await resp.json();

@@ -133,9 +133,17 @@ async fn member_can_leave_and_is_locked_out() {
         .unwrap();
     assert_eq!(resp.status().as_u16(), 403);
 
-    // members endpoint shows him as removed.
+    // members endpoint (member-only) shows him as removed. Bob himself
+    // is locked out of it now, so Alice asks.
+    let mts = time::OffsetDateTime::now_utc().unix_timestamp();
+    let msig = browser::sign_members_request(&room_id_bytes, mts, &_alice.sig_priv);
     let members: MembersResp = client
-        .get(format!("{}/api/rooms/{}/members", s.base_url, create.room_id))
+        .post(format!("{}/api/rooms/{}/members", s.base_url, create.room_id))
+        .json(&json!({
+            "requester_sig_pubkey": browser::b64(&_alice.sig_pub),
+            "ts": mts,
+            "sig": browser::b64(&msig),
+        }))
         .send()
         .await
         .unwrap()

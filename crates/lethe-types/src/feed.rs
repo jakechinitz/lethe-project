@@ -21,6 +21,11 @@ pub struct FeedItem {
     pub created_at: CoarseDate,
     pub last_post_at: CoarseDate,
     pub post_count: i32,
+    /// Room id the OP *claims* a vouch from, if any. The feed does
+    /// not verify vouches; the thread page does. Lets a reader filter
+    /// the feed to rooms they trust before opening anything.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub op_vouch_room_id: Option<B64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

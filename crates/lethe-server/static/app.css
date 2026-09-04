@@ -800,3 +800,26 @@ select option {
   font-size: .82rem;
   color: var(--muted, #888);
 }
+
+/* ---- Room vouches --------------------------------------------------- */
+.vouch-controls { margin: .75rem 0; }
+.vouch-filter { display: inline-flex; gap: .4rem; align-items: baseline; }
+.vouch-toggle { margin: .5rem 0; }
+.vouch-badge {
+  display: inline-block;
+  font-size: .72rem;
+  padding: .05rem .4rem;
+  border: 1px solid var(--fg);
+  border-radius: 0;
+}
+.vouch-badge.trusted { background: var(--fg); color: var(--bg); }
+.vouch-badge.untrusted { opacity: .75; }
+.vouch-badge.invalid { border-style: dashed; opacity: .6; }
+.vouch-same { font-size: .72rem; opacity: .8; }
+.posts .post.vouch-hidden { display: none; }
+.posts .post.vouch-dim { opacity: .45; }
+.trusted-rooms { margin-top: 1.5rem; }
+.trusted-row { display: flex; gap: .75rem; align-items: baseline; margin: .3rem 0; }
+.trust-form label { display: block; margin: .4rem 0; }
+.feed-item.vouch-hidden { display: none; }
+.feed-vouch { font-size: .72rem; margin-left: .4rem; }

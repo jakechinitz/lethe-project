@@ -114,6 +114,16 @@
         this server on the chosen day. Other servers it federated to may
         keep their copies.
       </p>
+      <label>
+        Vouch as a member of
+        <select name="vouch_room" id="vouch-room">
+          <option value="" selected>No vouch</option>
+        </select>
+      </label>
+      <p class="hint">
+        Proves "someone in that room wrote this" without revealing who.
+        Most private when combined with <em>no</em> thread identity.
+      </p>
       <div class="identity-toggle">
         <label>
           <input type="checkbox" id="claim-op-identity">
@@ -132,6 +142,14 @@
     </form>
   </details>
 </section>
+
+<div class="vouch-controls">
+  <label class="vouch-filter">
+    <input type="checkbox" id="trusted-only">
+    Only show threads whose first post claims a vouch from a room I trust
+    <span class="muted">(verified when you open the thread)</span>
+  </label>
+</div>
 
 <section class="feed" id="feed" aria-busy="true">
   <p class="muted">Loading…</p>

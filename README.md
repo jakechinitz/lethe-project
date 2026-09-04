@@ -282,6 +282,68 @@ A background **retention worker** runs every hour and deletes:
 - threads older than the board's `retention_days`, where set
 - room messages older than the room's `message_retention_days`
 
+## Room vouches on public posts
+
+The public board can be flooded — a hundred fabricated "agents at X"
+reports drowning the one real one — and no anonymous platform can tell
+humans from bots or shills. Lethe's answer is not detection but
+**portable group trust**: a member of a private room can attach a
+*vouch* to a public post proving *"someone in room X wrote this exact
+text"* without revealing who. Readers who trust that room filter to
+vouched posts and the flood inverts: the attacker's volume becomes
+noise, the one real report lights up.
+
+How it works, end to end:
+
+- **The creator opts in** (room page → "Enable vouching"). Their
+  device signs a *roster*: the sorted signing pubkeys of every
+  accepted, active member. It re-signs automatically (epoch +1) as
+  members come and go. `POST /api/rooms/:id/roster` enforces that the
+  set equals the live accepted-active set and the epoch is exactly
+  current +1, so neither a stale client nor the server can publish a
+  roster the room doesn't have.
+- **Only vouching rooms expose `GET /api/rooms/:id/roster`**, and it
+  returns exactly what a verifier needs: creator pubkey, epoch, member
+  *signing* pubkeys, creator signature. No box keys, no join dates, no
+  invite tree. (`/members` is now member-only for *all* rooms — it was
+  previously public, which leaked room size and the invite graph to
+  anyone holding a room id.)
+- **A member vouches** by attaching a linkable ring signature (LSAG
+  over Ed25519, `client/src/lib/ringsig.ts`) whose ring is the current
+  roster. Bound to `room_id || thread_id || SHA-256(body)`, so it can't
+  be lifted onto a different post. The server verifies it
+  (`crypto::verify_vouch`, curve25519-dalek) as defense in depth and
+  stores it verbatim; **readers verify again locally** against the
+  creator-signed roster, because the server is untrusted.
+- **Linkability is thread-scoped.** The key image is derived from
+  `(member key, room, thread)`: two vouches by the same member in one
+  thread visibly link ("same voucher as #N"), so one insider can't fake
+  a crowd; across threads they're unlinkable. It also lets the thread
+  page show the one count that's safe to show — *"3 distinct members of
+  Downtown organizers vouched in this thread"* — because the set behind
+  it is curated, not open.
+- **Trust is a local list.** "My rooms" → "Rooms I trust" holds room
+  ids and labels in `localStorage` only; the server never learns which
+  rooms a reader trusts or that they filtered. Thread and feed pages
+  get an "only rooms I trust" toggle.
+
+Privacy notes worth reading before enabling it:
+
+- A vouch reveals *"a member of room X"* and, within one thread, *"the
+  same member as post #N"*. Never which member, never across threads.
+- Vouching **without** a thread identity is the most private option
+  (the post is attached to nothing but the room); the UI says so and
+  warns when both are combined.
+- The ring is the anonymity set. A two-person room gives the signer a
+  cover of two.
+- Vouches don't federate yet (peers can't see the room's roster); they
+  verify on the origin server only.
+- The hash-to-point used for key images is libsodium's
+  `crypto_core_ed25519_from_uniform` over SHA-512, which is
+  byte-identical to dalek's `nonspec_map_to_curve`; the test suite
+  verifies a browser-produced signature on the server
+  (`tests/fixtures/vouch_vector_ts.json`).
+
 ## Deleting your own post
 
 A post signed with a thread-local identity can be deleted by its

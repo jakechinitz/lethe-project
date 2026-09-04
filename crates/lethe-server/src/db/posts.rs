@@ -15,6 +15,9 @@ pub struct NewPost<'a> {
     /// 32-byte Ed25519 pubkey of this server. Federated copies will
     /// carry this same value back when they're pulled by peers.
     pub origin_server_id: &'a [u8],
+    /// Room vouch as canonical JSON, plus the room id it cites. Stored
+    /// verbatim and served back for reader-side verification.
+    pub vouch: Option<(&'a str, &'a [u8])>,
 }
 
 pub struct Inserted {
@@ -36,11 +39,12 @@ pub async fn insert(db: &PgPool, p: NewPost<'_>) -> Result<Inserted, sqlx::Error
     let mut tx = db.begin().await?;
     let row: (i32,) = sqlx::query_as(
         "INSERT INTO posts (id, thread_id, seq, body, pow_nonce, pubkey, signature,
-                            created_at, origin_server_id, origin_post_id)
+                            created_at, origin_server_id, origin_post_id,
+                            vouch, vouch_room_id)
          VALUES (
              $1, $2,
              COALESCE((SELECT MAX(seq) FROM posts WHERE thread_id = $2), 0) + 1,
-             $3, $4, $5, $6, $7, $8, $1
+             $3, $4, $5, $6, $7, $8, $1, $9, $10
          )
          RETURNING seq",
     )
@@ -52,6 +56,8 @@ pub async fn insert(db: &PgPool, p: NewPost<'_>) -> Result<Inserted, sqlx::Error
     .bind(p.signature)
     .bind(p.created_at)
     .bind(p.origin_server_id)
+    .bind(p.vouch.map(|v| v.0))
+    .bind(p.vouch.map(|v| v.1))
     .fetch_one(&mut *tx)
     .await?;
     sqlx::query(
@@ -241,7 +247,8 @@ pub async fn author_delete(
     }
     sqlx::query(
         "UPDATE posts
-         SET body = '', signature = NULL, pubkey = NULL, pow_nonce = ''
+         SET body = '', signature = NULL, pubkey = NULL, pow_nonce = '',
+             vouch = NULL, vouch_room_id = NULL
          WHERE id = $1",
     )
     .bind(post_id)
@@ -261,6 +268,7 @@ struct PostRow {
     removal_reason: Option<String>,
     origin_server_id: Option<Vec<u8>>,
     origin_server_label: Option<String>,
+    vouch: Option<String>,
 }
 
 pub async fn list_in_thread(
@@ -274,7 +282,8 @@ pub async fn list_in_thread(
         "SELECT p.id, p.seq, p.body, p.created_at, p.pubkey,
                 pr.reason AS removal_reason,
                 p.origin_server_id,
-                fp.label AS origin_server_label
+                fp.label AS origin_server_label,
+                p.vouch
          FROM posts p
          LEFT JOIN post_removals pr ON pr.post_id = p.id
          LEFT JOIN federation_peers fp ON fp.server_pubkey = p.origin_server_id
@@ -315,6 +324,13 @@ pub async fn list_in_thread(
             r.origin_server_id.as_ref().map(|o| ids::b64(o))
         };
         let origin_server_label = if local { None } else { r.origin_server_label };
+        // Vouch is served verbatim; a stored row that fails to parse is
+        // treated as absent rather than failing the whole listing.
+        let vouch = if removed {
+            None
+        } else {
+            r.vouch.as_deref().and_then(|s| serde_json::from_str(s).ok())
+        };
         out.push(PostView {
             post_id: ids::b64(&r.id),
             seq: r.seq,
@@ -324,6 +340,7 @@ pub async fn list_in_thread(
             signer_first_seq,
             origin_server_id,
             origin_server_label,
+            vouch,
         });
     }
     Ok(out)

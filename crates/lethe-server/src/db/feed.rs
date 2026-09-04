@@ -23,6 +23,7 @@ struct FeedRow {
     created_at: Date,
     last_post_at: Date,
     post_count: i32,
+    op_vouch_room_id: Option<Vec<u8>>,
 }
 
 impl From<FeedRow> for FeedItem {
@@ -34,9 +35,17 @@ impl From<FeedRow> for FeedItem {
             created_at: CoarseDate(r.created_at),
             last_post_at: CoarseDate(r.last_post_at),
             post_count: r.post_count,
+            op_vouch_room_id: r.op_vouch_room_id.as_ref().map(|b| ids::b64(b)),
         }
     }
 }
+
+/// Column list shared by the four feed queries. The OP's claimed
+/// vouch room rides along so the client can pre-filter the feed by
+/// trusted rooms; verification happens on the thread page.
+const FEED_COLS: &str = "t.id, t.board_id, t.title, t.created_at, t.last_post_at, t.post_count,
+             (SELECT op.vouch_room_id FROM posts op
+               WHERE op.thread_id = t.id AND op.seq = 1) AS op_vouch_room_id";
 
 pub async fn list(
     db: &PgPool,
@@ -55,50 +64,50 @@ pub async fn list(
 
     // sqlx PG can take &[&str] via ANY($n).
     let rows: Vec<FeedRow> = match (sort, cursor) {
-        (FeedSort::LastComment, None) => sqlx::query_as(
-            "SELECT id, board_id, title, created_at, last_post_at, post_count
-             FROM threads
-             WHERE board_id = ANY($1)
-             ORDER BY last_post_at DESC, id DESC
-             LIMIT $2",
-        )
+        (FeedSort::LastComment, None) => sqlx::query_as(&format!(
+            "SELECT {FEED_COLS}
+             FROM threads t
+             WHERE t.board_id = ANY($1)
+             ORDER BY t.last_post_at DESC, t.id DESC
+             LIMIT $2"
+        ))
         .bind(boards)
         .bind(limit)
         .fetch_all(db)
         .await?,
-        (FeedSort::LastComment, Some(c)) => sqlx::query_as(
-            "SELECT id, board_id, title, created_at, last_post_at, post_count
-             FROM threads
-             WHERE board_id = ANY($1)
-               AND (last_post_at, id) < ($2, $3)
-             ORDER BY last_post_at DESC, id DESC
-             LIMIT $4",
-        )
+        (FeedSort::LastComment, Some(c)) => sqlx::query_as(&format!(
+            "SELECT {FEED_COLS}
+             FROM threads t
+             WHERE t.board_id = ANY($1)
+               AND (t.last_post_at, t.id) < ($2, $3)
+             ORDER BY t.last_post_at DESC, t.id DESC
+             LIMIT $4"
+        ))
         .bind(boards)
         .bind(c.sort_value)
         .bind(c.thread_id)
         .bind(limit)
         .fetch_all(db)
         .await?,
-        (FeedSort::Newest, None) => sqlx::query_as(
-            "SELECT id, board_id, title, created_at, last_post_at, post_count
-             FROM threads
-             WHERE board_id = ANY($1)
-             ORDER BY created_at DESC, id DESC
-             LIMIT $2",
-        )
+        (FeedSort::Newest, None) => sqlx::query_as(&format!(
+            "SELECT {FEED_COLS}
+             FROM threads t
+             WHERE t.board_id = ANY($1)
+             ORDER BY t.created_at DESC, t.id DESC
+             LIMIT $2"
+        ))
         .bind(boards)
         .bind(limit)
         .fetch_all(db)
         .await?,
-        (FeedSort::Newest, Some(c)) => sqlx::query_as(
-            "SELECT id, board_id, title, created_at, last_post_at, post_count
-             FROM threads
-             WHERE board_id = ANY($1)
-               AND (created_at, id) < ($2, $3)
-             ORDER BY created_at DESC, id DESC
-             LIMIT $4",
-        )
+        (FeedSort::Newest, Some(c)) => sqlx::query_as(&format!(
+            "SELECT {FEED_COLS}
+             FROM threads t
+             WHERE t.board_id = ANY($1)
+               AND (t.created_at, t.id) < ($2, $3)
+             ORDER BY t.created_at DESC, t.id DESC
+             LIMIT $4"
+        ))
         .bind(boards)
         .bind(c.sort_value)
         .bind(c.thread_id)
